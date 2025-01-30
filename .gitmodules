@@ -9,10 +9,10 @@
 	url = https://github.com/stephenrkell/libdlbind.git
 [submodule "contrib/liballocstool"]
 	path = contrib/liballocstool
-	url = https://github.com/stephenrkell/liballocstool.git
+	url = https://github.com/difcsi/liballocstool.git
 [submodule "contrib/libsystrap"]
 	path = contrib/libsystrap
-	url = https://github.com/stephenrkell/libsystrap.git
+	url = https://github.com/difcsi/libsystrap.git
 [submodule "contrib/toolsub"]
 	path = contrib/toolsub
 	url = https://github.com/stephenrkell/toolsub.git
