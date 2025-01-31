@@ -219,7 +219,7 @@ _Bool walk_all_ld_so_symbols(struct link_map *ld_so_link_map, void *arg)
 	if (ret <= 0) abort();
 	meta_buf[sizeof meta_buf - 1] = '\0';
 	struct loadee_info ld_so_meta = load_file(meta_buf,
-		/* loadee_base_addr_hint */ NULL, NULL, NULL);
+		/* loadee_base_addr_hint */ 0, NULL, NULL);
 	if (!ld_so_meta.dynamic_vaddr) abort(); // harsh but go with it for now
 	ElfW(Dyn) *meta_dyn = (ElfW(Dyn) *) (ld_so_meta.dynamic_vaddr + ld_so_meta.base_addr);
 	// also look for  'extrasyms' and walk those

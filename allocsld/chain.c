@@ -9,6 +9,7 @@
 #include "donald.h"
 #include <link.h>
 #include "relf.h"
+#include "cover-tracks.h"
 
 #define die(s, ...) do { fprintf(stderr, DONALD_NAME ": " s , ##__VA_ARGS__); exit(-1); } while(0)
 // #define die(s, ...) do { fwrite(DONALD_NAME ": " s , sizeof DONALD_NAME ": " s, 1, stderr); exit(-1); } while(0)
@@ -148,7 +149,7 @@ SECTIONS
 		if (!interp_addr) die("could not find PT_INTERP header in the target program\n");
 		if (interp_sz < strlen(ldso_path) + 1)
 		{
-			die("insufficient space for ld.so interp string (size %d)\n", interp_sz);
+			die("insufficient space for ld.so interp string (size %zu)\n", interp_sz);
 		}
 		memcpy(interp_addr, ldso_path, strlen(ldso_path) + 1);
 	} // end if (!we_are_the_program)
