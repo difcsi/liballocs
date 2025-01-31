@@ -196,3 +196,18 @@ oopsla*.ps
 *.orig
 /tests/bit-fields/bit-fields
 /tests/packed-seq-walk/packed-seq-walk
+
+
+uniqtype.h
+uniqtype-defs.h
+
+# Tools
+
+tools/dwarf-machine-self-test
+tools/frametypes2
+tools/noopgen
+
+
+# Allocsld
+allocsld/*args
+allocsld/*.so.*
