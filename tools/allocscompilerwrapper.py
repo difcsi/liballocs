@@ -49,7 +49,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                 # allocfns are "(.*)\((.*)\)(.?)
                 # subfreefns are "(.*)\((.*)\)(->[a-zA-Z0-9_]+)"
                 # l1freefns are "(.*)\((.*)\)"
-                m = re.match("(.*)\((.*)\)(->[a-zA-Z0-9_]+|.)?", fn)
+                m = re.match(r"(.*)\((.*)\)(->[a-zA-Z0-9_]+|.)?", fn)
                 fnName = m.groups()[0]
                 syms += [fnName]
         return syms
@@ -133,7 +133,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
         with (self.makeErrFile(os.path.realpath(filename) + ".fixuplog", "w+") if not errfile else errfile) as errfile:
             regex = "|".join(patterns)
             self.debugMsg("Looking for defined functions matching `%s'\n" % regex)
-            cmdstring = "nm -fbsd \"%s\" | grep -v '^[0-9a-f ]\+ U ' | egrep \"^[0-9a-f ]+ . (%s)$\" | sed 's/^[0-9a-f ]\+ . //'" \
+            cmdstring = r"nm -fbsd \"%s\" | grep -v '^[0-9a-f ]\+ U ' | egrep \"^[0-9a-f ]+ . (%s)$\" | sed 's/^[0-9a-f ]\+ . //'" \
                 % (filename, regex)
             self.debugMsg("cmdstring for objdump is " + cmdstring + "\n")
             grep_output = subprocess.Popen(["sh", "-c", cmdstring], stdout=subprocess.PIPE, stderr=errfile).communicate()[0].decode()
@@ -361,7 +361,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
 
                 # generate caller-side alloc stubs
                 for allocFn in self.allAllocFns():
-                    m = re.match("(.*)\((.*)\)(.?)", allocFn)
+                    m = re.match(r"(.*)\((.*)\)(.?)", allocFn)
                     fnName = m.groups()[0]
                     fnSig = m.groups()[1]
                     def tupify(s):
@@ -409,7 +409,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                     stubsfile.flush()
                 # also do caller-side subfree wrappers
                 for freeFn in self.allSubFreeFns():
-                    m = re.match("(.*)\((.*)\)(->([a-zA-Z0-9_]+))", freeFn)
+                    m = re.match(r"(.*)\((.*)\)(->([a-zA-Z0-9_]+))", freeFn)
                     fnName = m.groups()[0]
                     fnSig = m.groups()[1]
                     allocFnName = m.groups()[3]
@@ -425,7 +425,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                         #stubsfile.write("make_void_callee_wrapper(%s)\n" % (fnName))
                 # also do caller-side free (non-sub) -wrappers
                 for freeFn in self.allL1OrWrapperFreeFns():
-                    m = re.match("(.*)\((.*)\)", freeFn)
+                    m = re.match(r"(.*)\((.*)\)", freeFn)
                     fnName = m.groups()[0]
                     fnSig = m.groups()[1]
                     ptrndx = fnSig.find('P')
