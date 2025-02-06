@@ -1,0 +1,24 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	$(MAKE) -C contrib  && \
+	. contrib/env.sh && \
+	./autogen.sh && \
+	dh_auto_configure
+
+override_dh_auto_build:
+	. contrib/env.sh && \
+	dh_auto_build
+
+override_dh_auto_install:
+	dh_auto_install
+	# Move files to dev package
+	mkdir -p debian/liballocs-dev/usr/lib
+	mkdir -p debian/liballocs-dev/usr/include
+	cp -r debian/tmp/usr/lib/* debian/liballocs-dev/usr/lib/
+	cp -r debian/tmp/usr/include/* debian/liballocs-dev/usr/include/
