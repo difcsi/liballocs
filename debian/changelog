@@ -1,0 +1,5 @@
+liballocs (0.1.0-1) bullseye; urgency=medium
+
+  * Initial debian packaging
+
+ -- Zoltan Meszaros <zoltan.meszaros@kcl.ac.uk>  Thu, 06 Feb 2025 10:41:30 +0000
