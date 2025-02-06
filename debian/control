@@ -24,6 +24,7 @@ Build-Depends:
  libboost-serialization-dev,
  libboost-filesystem-dev,
  libffi-dev,
+ libunwind-dev,
  gcc
 Standards-Version: 4.7.0
 Homepage: https://github.com/stephenrkell/liballocs
