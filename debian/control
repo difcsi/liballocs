@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Zoltan Meszaros <zoltan.meszaros@kcl.ac.uk>
 Rules-Requires-Root: no
 Build-Depends:
- debhelper-compat,
+ debhelper-compat (= 11),
  autotools-dev,
  ocaml (<<5),
  ocamlbuild,
