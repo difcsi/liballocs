@@ -15,10 +15,13 @@ jobs:
       - name: Install Debian packaging dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y debhelper dpkg-dev
+          sudo apt-get install -y debhelper dpkg-dev debbootstrap devscripts equivs
       - uses: actions/checkout@v3
         with:
           submodules: recursive
+      - name: Install build dependencies
+        run: |
+          sudo mk-build-deps -i -r -t 'apt-get -y'
       - name: Create upstream tarball
         run: |
           VERSION=0.1.0
