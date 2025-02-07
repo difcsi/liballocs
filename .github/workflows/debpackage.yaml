@@ -8,13 +8,12 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
 
       - name: Install Debian packaging dependencies
         run: |
-          sudo add-apt-repository ppa:avsm/ppa -y
           sudo apt-get update
           sudo apt-get install -y debhelper dpkg-dev devscripts equivs
       - uses: actions/checkout@v3
