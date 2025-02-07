@@ -15,7 +15,7 @@ jobs:
       - name: Install Debian packaging dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y debhelper dpkg-dev debbootstrap devscripts equivs
+          sudo apt-get install -y debhelper dpkg-dev devscripts equivs
       - uses: actions/checkout@v3
         with:
           submodules: recursive
