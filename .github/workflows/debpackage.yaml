@@ -14,6 +14,7 @@ jobs:
 
       - name: Install Debian packaging dependencies
         run: |
+          sudo add-apt-repository ppa:avsm/ppa -y
           sudo apt-get update
           sudo apt-get install -y debhelper dpkg-dev devscripts equivs
       - uses: actions/checkout@v3
@@ -21,13 +22,13 @@ jobs:
           submodules: recursive
       - name: Install build dependencies
         run: |
-          sudo mk-build-deps -i -r -t 'apt-get -y' debian/control
+          sudo mk-build-deps -i -r --tool "apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends --yes"
       - name: Create upstream tarball
         run: |
           VERSION=0.1.0
           tar -czf ../liballocs_${VERSION}.orig.tar.gz .
       - name: Build Debian package
-        run: dpkg-buildpackage -us -uc
+        run: dpkg-buildpackage -rfakeroot -b -us -uc
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
