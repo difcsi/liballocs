@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Zoltan Meszaros <zoltan.meszaros@kcl.ac.uk>
 Rules-Requires-Root: no
 Build-Depends:
- debhelper-compat (= 12),
+ debhelper-compat (= 13),
  autotools-dev,
  build-essential,
  libbsd-dev,
@@ -17,7 +17,7 @@ Build-Depends:
  pkg-config,
  autoconf-archive,
  g++,
- opam
+ opam,
  ocamlbuild,
  ocaml-findlib,
  libnum-ocaml-dev,

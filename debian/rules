@@ -6,8 +6,9 @@ export DH_VERBOSE = 1
 	dh $@
 
 override_dh_auto_configure:
-	opam init --compiler=4.11.0
-	make -C contrib
+	opam init --compiler=4.11.0 --disable-sandboxing -y
+	eval $(opam env) && \
+	make -C contrib  && \
 	. contrib/env.sh && \
 	./autogen.sh && \
 	dh_auto_configure
