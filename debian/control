@@ -6,16 +6,24 @@ Rules-Requires-Root: no
 Build-Depends:
  debhelper-compat (= 11),
  autotools-dev,
- ocaml (<<5),
- ocamlbuild,
- ocaml-findlib,
- libnum-ocaml-dev,
+ build-essential,
  libbsd-dev,
  libelf-dev,
  libdw-dev,
  binutils-dev,
+ autoconf,
+ automake,
+ libtool,
+ pkg-config,
+ autoconf-archive,
+ g++,
+ ocaml (<<5),
+ ocamlbuild,
+ ocaml-findlib,
+ libnum-ocaml-dev,
  default-jdk-headless,
  python3,
+ libunwind-dev,
  libc6-dev-i386,
  zlib1g-dev,
  libc6-dbg,
@@ -24,8 +32,6 @@ Build-Depends:
  libboost-serialization-dev,
  libboost-filesystem-dev,
  libffi-dev,
- libunwind-dev,
- gcc
 Standards-Version: 4.7.0
 Homepage: https://github.com/stephenrkell/liballocs
 #Vcs-Browser: https://salsa.debian.org/debian/liballocs
