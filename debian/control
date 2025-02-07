@@ -17,7 +17,7 @@ Build-Depends:
  pkg-config,
  autoconf-archive,
  g++,
- ocaml (= 4.11),
+ ocaml (= 4.11.1),
  ocamlbuild,
  ocaml-findlib,
  libnum-ocaml-dev,
