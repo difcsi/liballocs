@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
           sudo apt-get install -y debhelper dpkg-dev devscripts equivs sbuild
       - name: Set up sbuild chroot 
         run: |
-          sudo sbuild-createchroot buster /srv/chroot/buster-amd64 http://deb.debian.org/debian/
+          sudo sbuild-createchroot bullseye /srv/chroot/bullseye-amd64 http://deb.debian.org/debian/
       - name: Create upstream tarball
         run: |
           VERSION=0.1.0
