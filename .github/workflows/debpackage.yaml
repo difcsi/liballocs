@@ -11,7 +11,9 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Install Debian packaging dependencies
         run: |
           sudo add-apt-repository universe -y
@@ -20,9 +22,6 @@ jobs:
       - name: Set up sbuild chroot 
         run: |
           sudo sbuild-createchroot buster /srv/chroot/buster-amd64 http://deb.debian.org/debian/
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
       - name: Create upstream tarball
         run: |
           VERSION=0.1.0
