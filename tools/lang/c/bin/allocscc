@@ -7,7 +7,7 @@
 # The Right Thing to do is to somehow replicate the source directory structure
 # rooted at the current directory. But it's not clear how to do this in general.
 
-import os, sys, re, subprocess, tempfile
+import os, sys
 # HACK
 REAL_FILE = os.path.realpath(__file__)
 REAL_DIR = os.path.realpath(os.path.dirname(REAL_FILE))
