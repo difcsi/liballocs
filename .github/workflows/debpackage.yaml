@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - debian
-  workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,13 +16,7 @@ jobs:
         run: |
           sudo add-apt-repository universe -y
           sudo apt-get update
-          sudo apt-get install -y debhelper dpkg-dev devscripts equivs sbuild
-      - name: Set up sbuild chroot 
-        run: |
-          sudo sbuild-adduser $(whoami)
-          newgrp sbuild
-          sudo mkdir -p /srv/chroot
-          sudo sbuild-createchroot bullseye /srv/chroot/bullseye-amd64 http://deb.debian.org/debian/
+          sudo apt-get install -y debhelper dpkg-dev devscripts equivs sbuild ubuntu-dev-tools
       - name: Create upstream tarball
         run: |
           VERSION=0.1.0
