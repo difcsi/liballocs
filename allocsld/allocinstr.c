@@ -217,7 +217,7 @@ _Bool walk_all_ld_so_symbols(struct link_map *ld_so_link_map, void *arg)
 	int fd_meta = find_and_open_meta_libfile(SYSTEM_LDSO_PATH);
 	if (fd_meta == -1) goto out_notloaded;
 	struct loadee_info ld_so_meta = load_from_fd(fd_meta, meta_libfile_name(SYSTEM_LDSO_PATH),
-		/* loadee_base_addr_hint */ NULL, NULL, NULL);
+		/* loadee_base_addr_hint */ 0, NULL, 0);
 	if (!ld_so_meta.dynamic_vaddr) goto out_notloaded; // harsh but go with it for now
 	ElfW(Dyn) *meta_dyn = (ElfW(Dyn) *) (ld_so_meta.dynamic_vaddr + ld_so_meta.base_addr);
 	// also look for  'extrasyms' and walk those
