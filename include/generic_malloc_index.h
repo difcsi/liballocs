@@ -364,9 +364,8 @@ static inline struct insert *__generic_malloc_index_insert(
 	p_insert = insert_for_chunk_and_caller_usable_size(allocptr,
 		caller_usable_size);
 	/* Populate our extra in-chunk fields */
-	p_insert->alloc_site_flag = 0U;
-	p_insert->alloc_site = (uintptr_t) caller;
-
+	p_insert->initial.unused = 0U;
+	p_insert->initial.alloc_site = (uintptr_t) caller;
 #if 0 // def PRECISE_REQUESTED_ALLOCSIZE
 	/* FIXME: this isn't really the insert size. It's the insert plus padding.
 	 * I'm not sure why/whether we need this. */
@@ -580,7 +579,10 @@ struct insert *lookup_object_info_via_bitmap(struct arena_bitmap_info *info,
 	unsigned start_idx;
 	unsigned long found_bitidx;
 
-	if (!info) goto out;
+	if (!info){
+		assert(!found_ins || INSERT_DESCRIBES_OBJECT(found_ins));
+		return found_ins;
+	}
 	start_idx = ((uintptr_t) mem - (uintptr_t) info->bitmap_base_addr) / MALLOC_ALIGN;
 	/* OPTIMISATION: exploit the maximum object size,
 	 * to set a "fake" bitmap base address that serves as the maximum
@@ -616,7 +618,6 @@ struct insert *lookup_object_info_via_bitmap(struct arena_bitmap_info *info,
 		if (out_object_start) *out_object_start = object_start;
 		if (out_object_size) *out_object_size = usersize(object_start, sizefn);
 	}
-out:
 	assert(!found_ins || INSERT_DESCRIBES_OBJECT(found_ins));
 	return found_ins;
 }
@@ -712,8 +713,8 @@ liballocs_err_t __generic_malloc_set_type(struct allocator *a,
 	struct insert *ins = lookup_object_info(arena_for_userptr(a, obj), obj,
 		NULL, NULL, NULL, sizefn);
 	if (!ins) return &__liballocs_err_unindexed_heap_object;
-	ins->alloc_site = (uintptr_t) new_type;
-	ins->alloc_site_flag = 1; // meaning it's a type, not a site
+	ins->with_type.uniqtype_shifted = (uintptr_t) ( (unsigned long) new_type >> 4);
+	ins->with_type.alloc_site_id = 1; // ZMTODO: ID
 	return NULL;
 }
 
@@ -729,15 +730,14 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		++__liballocs_aborted_unindexed_heap;
 		return &__liballocs_err_unindexed_heap_object;
 	}
-	void *alloc_site_addr = (void *) ((uintptr_t) p_ins->alloc_site);
 
 	/* Now we have a uniqtype or an allocsite. For long-lived objects 
 	 * the uniqtype will have been installed in the heap header already.
 	 * This is the expected case.
 	 */
 	struct uniqtype *alloc_uniqtype;
-	if (__builtin_expect(p_ins->alloc_site_flag, 1))
-	{
+	if (__builtin_expect(IS_WITH_TYPE(p_ins), 1)){
+		
 		if (out_site)
 		{
 			//unsigned short id = (unsigned short) p_ins->un.bits;
@@ -750,17 +750,16 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 			*out_site = NULL;
 		}
 		/* Clear the low-order bit, which is available as an extra flag 
-		 * bit. libcrunch uses this to track whether an object is "loose"
-		 * or not. Loose objects have approximate type info that might be 
-		 * "refined" later, typically e.g. from __PTR_void to __PTR_T.
-		 * FIXME: this should just be determined by abstractness of the type. */
-		alloc_uniqtype = (struct uniqtype *)((uintptr_t)(p_ins->alloc_site) & ~0x1ul);
-	}
-	else
-	{
+			* bit. libcrunch uses this to track whether an object is "loose"
+			* or not. Loose objects have approximate type info that might be 
+			* "refined" later, typically e.g. from __PTR_void to __PTR_T.
+			* FIXME: this should just be determined by abstractness of the type. */
+		alloc_uniqtype = (struct uniqtype *)((uintptr_t)(p_ins->with_type.uniqtype_shifted << 4) & ~0x1ul);
+
+	} else {
 		/* Look up the allocsite's uniqtype, and install it in the heap info 
 		 * (on NDEBUG builds only, because it reduces debuggability a bit). */
-		uintptr_t alloc_site_addr = p_ins->alloc_site;
+		uintptr_t alloc_site_addr = p_ins->with_type.uniqtype_shifted << 4;
 		void *alloc_site = (void*) alloc_site_addr;
 		if (out_site) *out_site = alloc_site;
 		struct allocsite_entry *entry = __liballocs_find_allocsite_entry_at(alloc_site);
@@ -771,7 +770,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		{
 			__liballocs_addrlist_add(&__liballocs_unrecognised_heap_alloc_sites, alloc_site);
 		}
-#ifdef NDEBUG
+#if 1
 		// install it for future lookups
 		// FIXME: make this atomic using a union
 		// Is this in a loose state? NO. We always make it strict.
@@ -779,8 +778,8 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		// it a dynamically-sized alloc with a uniqtype.
 		// This means we're the first query to rewrite the alloc site,
 		// and is the client's queue to go poking in the insert.
-		p_ins->alloc_site_flag = 1;
-		p_ins->alloc_site = (uintptr_t) alloc_uniqtype /* | 0x0ul */;
+		p_ins->initial.unused = 0;
+		p_ins->initial.alloc_site = (uintptr_t) alloc_uniqtype /* | 0x0ul */;
 		/* How do we get the id? Doing a binary search on the by-id spine is
 		 * okay because there will be very few of them. We don't want to do
 		 * a binary search on the table proper. But that's okay. We get
@@ -795,7 +794,6 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		
 #endif
 	}
-
 	// if we didn't get an alloc uniqtype, we abort
 	if (!alloc_uniqtype) 
 	{
@@ -815,8 +813,8 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		if (p_ins)
 		{
 	#ifdef NDEBUG
-			p_ins->alloc_site_flag = 1;
-			p_ins->alloc_site = 0;
+			p_ins->with_type.alloc_site_id = 1; // ZMTODO: ID
+			p_ins->with_type.uniqtype_shifted = 0;
 	#endif
 			assert(INSERT_DESCRIBES_OBJECT(p_ins));
 			assert(!INSERT_IS_NULL(p_ins));

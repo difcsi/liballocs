@@ -122,14 +122,14 @@ memrect_bucket_range_base(void *bucket, void *rect_base, void *table_coverage_st
 	((p_chunk_rec)->metadata_recs + (((p_ins) - (p_chunk_rec)->metadata_recs) % \
 	memrect_entries_per_layer((p_chunk_rec)->power_of_two_size, (p_chunk_rec)->log_pitch)))
 /* Terminators must have the alloc_site and the flag both unset. */
-#define ENTRY_IS_NULL(p_ins) (!(p_ins)->alloc_site && !(p_ins)->alloc_site_flag)
+#define ENTRY_IS_NULL(p_ins) (!IS_WITH_TYPE(p_ins) && !p_ins->initial.alloc_site )
 
 /* Continuation records have the flag set and a non-user-address (actually the object
  * size) in the alloc_site. */
 #define IS_CONTINUATION_ENTRY(ins) \
-	(!(INSERT_DESCRIBES_OBJECT(ins)) && (ins)->alloc_site_flag)
-#define ENTRY_GET_STORED_OFFSET(ins) ((ins)->un.bits & 0xff)
-#define ENTRY_GET_THISBUCKET_SIZE(ins) (((ins)->un.bits >> 8) == 0 ? 256 : ((ins)->un.bits >> 8))
+	(!(INSERT_DESCRIBES_OBJECT(ins)) && IS_WITH_TYPE(ins))
+#define ENTRY_GET_STORED_OFFSET(ins) ((ins)->with_type.alloc_site_id & 0xff)
+#define ENTRY_GET_THISBUCKET_SIZE(ins) (((ins)->with_type.alloc_site_id >> 8) == 0 ? 256 : ((ins)->with_type.alloc_site_id >> 8))
 
 static
 struct insert *lookup_small_alloc(const void *ptr, 
@@ -269,8 +269,7 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 	assert(layer_num < NLAYERS(p_chunk_rec));
 	
 	/* Store the insert. The object start modulus goes in `bits'. */
-	p_ins->alloc_site = (uintptr_t) __current_allocsite;
-	p_ins->alloc_site_flag = 0;
+	p_ins->initial.unused = 0u;
 	
 	/* We also need to represent the object's size somehow. We choose to use 
 	 * continuation entries since the insert doesn't have enough bits. Continuation entries
@@ -286,7 +285,7 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 	assert(thisbucket_size != 0);
 	assert(thisbucket_size <= (1u << p_chunk_rec->log_pitch));
 	
-	p_ins->un.bits = (thisbucket_size << 8) | modulus;
+	p_ins->with_type.alloc_site_id = (thisbucket_size << 8) | modulus;
 	
 	/* We should be sane already, even though our continuation is not recorded. */
 	check_bucket_sanity(p_bucket, p_chunk_rec, container);
@@ -318,9 +317,10 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 		assert(size_bytes > 0);
 		assert(size_bytes < (uintptr_t) MINIMUM_USER_ADDRESS);
 		*p_continuation_ins = (struct insert) {
-			.alloc_site = size_bytes, // NOTE what we're doing here! the object size goes into the alloc_site field
-			.alloc_site_flag = 1,     // ditto
-			.un = { bits: (unsigned short) (size_in_continuation_bucket << 8) }  // ditto: modulus is zero, BUT size is included
+			.with_type = { 
+				alloc_site_id: (unsigned short) (size_in_continuation_bucket << 8),
+				uniqtype_shifted: size_bytes // NOTE what we're doing here! the object size goes into the uniqtype field
+			}
 		};
 		assert(IS_CONTINUATION_ENTRY(p_continuation_ins));
 		check_bucket_sanity(p_continuation_bucket, p_chunk_rec, container);
@@ -490,7 +490,7 @@ get_start_from_continuation(struct insert *p_ins, struct insert *p_bucket,
 	{
 		if (IS_CONTINUATION_ENTRY(i_layer)) continue;
 		// the modulus tells us where this object starts in the bucket range
-		unsigned short modulus = p_object_start_bucket->un.bits & 0xff;
+		unsigned short modulus = p_object_start_bucket->with_type.alloc_site_id & 0xff;
 		if (!biggest_modulus_pos || 
 				ENTRY_GET_STORED_OFFSET(i_layer) > ENTRY_GET_STORED_OFFSET(biggest_modulus_pos))
 		{
@@ -502,8 +502,8 @@ get_start_from_continuation(struct insert *p_ins, struct insert *p_bucket,
 	object_ins = biggest_modulus_pos;
 	char *object_start = (char*)(BUCKET_RANGE_BASE(p_object_start_bucket, p_chunk_rec, container->begin)) 
 			+ ENTRY_GET_STORED_OFFSET(biggest_modulus_pos);
-	uintptr_t object_size = p_ins->alloc_site;
-	
+	uintptr_t object_size = p_ins->with_type.alloc_site_id;
+
 	if (out_object_start) *out_object_start = object_start;
 	if (out_object_size) *out_object_size = object_size;
 	if (out_object_ins) *out_object_ins = object_ins;
@@ -524,10 +524,10 @@ check_bucket_sanity(struct insert *p_bucket, struct chunk_rec *p_chunk_rec, stru
 	{
 		// we should never need to go beyond the last layer
 		assert(layer_num < NLAYERS(p_chunk_rec));
-		
-		unsigned short thisbucket_size = i_layer->un.bits >> 8;
-		unsigned short modulus = i_layer->un.bits & 0xff;
-		
+
+		unsigned short thisbucket_size = i_layer->with_type.alloc_site_id >> 8;
+		unsigned short modulus = i_layer->with_type.alloc_site_id & 0xff;
+
 		assert(modulus < (1u << p_chunk_rec->log_pitch));
 		
 		if (IS_CONTINUATION_ENTRY(i_layer))
@@ -542,9 +542,9 @@ check_bucket_sanity(struct insert *p_bucket, struct chunk_rec *p_chunk_rec, stru
 			i_earlier_layer != i_layer;
 			i_earlier_layer += ENTRIES_PER_LAYER(p_chunk_rec))
 		{
-			unsigned short thisbucket_earlier_size = i_earlier_layer->un.bits >> 8;
-			unsigned short earlier_modulus = i_earlier_layer->un.bits & 0xff;
-			
+			unsigned short thisbucket_earlier_size = i_earlier_layer->with_type.alloc_site_id >> 8;
+			unsigned short earlier_modulus = i_earlier_layer->with_type.alloc_site_id & 0xff;
+
 			// note that either entry might be a continuation entry
 			// ... in which case zero-size means "the whole bucket"
 			assert(!(IS_CONTINUATION_ENTRY(i_earlier_layer) && thisbucket_earlier_size == 0));
@@ -623,8 +623,8 @@ struct insert *lookup_small_alloc(const void *ptr,
 			 *
 			 * it's an object start entry (ditto).
 			 */
-			unsigned short object_size_in_this_bucket = p_ins->un.bits >> 8;
-			unsigned short modulus = p_ins->un.bits & 0xff;
+			unsigned short object_size_in_this_bucket = p_ins->with_type.alloc_site_id >> 8;
+			unsigned short modulus = p_ins->with_type.alloc_site_id & 0xff;
 
 			if (IS_CONTINUATION_ENTRY(p_ins))
 			{
@@ -651,7 +651,7 @@ struct insert *lookup_small_alloc(const void *ptr,
 			else 
 			{
 				/* It's an object start entry. Does it overlap? */
-				char modulus = p_ins->un.bits & 0xff;
+				char modulus = p_ins->with_type.alloc_site_id & 0xff;
 				char *object_start_addr = thisbucket_base_addr + modulus;
 				void *object_end_addr = object_start_addr + object_size_in_this_bucket;
 

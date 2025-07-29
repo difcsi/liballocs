@@ -374,10 +374,9 @@ int ALLOC_EVENT(pre_nonnull_free)(void *userptr, size_t freed_usable_size) \
 { \
 	if (initial_lifetime_policies) /* always statically known but we can't #ifdef here */ \
 	{ \
-		lifetime_insert_t *lti = lifetime_insert_for_chunk(userptr, sizefn); \
-		/* GitHub issue #21: are different free functions different policies? not yet... */ \
-		if (lti) *lti &= ~MANUAL_DEALLOCATION_FLAG; \
-		if (lti && *lti) return 1; /* Cancel free if we are still alive */ \
+		INSERT_TYPE *lti = insert_for_chunk(userptr, sizefn); \
+		lti->with_type.lifetime_policies &= ~LIFETIME_POLICY_FLAG(0); /* ZMTODO: This should not be 0 by default, but the one corresponding to this free */ \
+		if (lti->with_type.lifetime_policies != 0) return 1; /* Cancel free if we are still alive */ \
 		__notify_free(userptr); \
 	} \
 	index_namefrag ## _index_delete(&ALLOC_ALLOCATOR_NAME(allocator_namefrag), \
