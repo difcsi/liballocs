@@ -55,19 +55,16 @@ struct insert {
 		struct {
 			unsigned unused:16; /* Always Zero, branch union on this */
 			unsigned long alloc_site:48;
-#if LIFETIME_POLICIES > 4
-	#error "Variable size lifetime policies not fully supported yet"
-				unsigned unused2:LIFETIME_POLICIES - 4;
-#endif
 		} initial;
-		struct {
+		struct insert_with_type {
 			unsigned alloc_site_id:16; /* Never Zero */
 			unsigned long uniqtype_shifted:44;  /* uniqtype ptrs "should be" 16-byte aligned => this field is ((unsigned long) u)>>4 */
 #if LIFETIME_POLICIES > 4
+		#error "Variable size lifetime policies not fully supported yet"
 		unsigned lifetime_policies:LIFETIME_POLICIES; /* TODO: Alignment needed instead of packed in this case */
 #else
-		unsigned lifetime_policies:4;
-#endif 
+		unsigned lifetime_policies:4; // should never be zero 0000 should be that it is freed when and only when parent is freed.
+#endif
 		} with_type;
 	};
 } __attribute((packed));

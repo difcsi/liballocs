@@ -29,7 +29,7 @@ struct entry {
 		    unsigned mod:16; /* Object start modulus */
 		} regular;
 		struct {
-			unsigned size_in_bucket:8;
+			unsigned size_in_bucket:8; // 0 means full bucket
 			unsigned always_zero:8;
 			unsigned long size:32;
 			unsigned always_zero2:16;
@@ -100,10 +100,7 @@ struct chunk_rec
  * layer, then try deeper layers until we find the entry we're looking
  * for or an empty reord
  * 
- * A memrect is defined by the following pa
-
-static inline
-uintptr_t memrect_modulus_of_addr(void *addrrameters:
+ * A memrect is defined by the following parameters:
  *    base address covered,
  *    length of covered region,
  *    pitch (log-base-two)
@@ -303,13 +300,10 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 	// we should never need to go beyond the last layer
 	assert(layer_num < NLAYERS(p_chunk_rec));
 	
-	/* Store the entry. The object start modulus goes in `bits'. */
 	p_ent->regular.alloc_site = __current_allocsite;
 	
 	/* We also need to represent the object's size somehow. We choose to use 
-	 * continuation entries since the entry doesn't have enough bits. Continuation entries
-	 * have alloc_site_flag == 1 and alloc_site < MINIMUM_USER_ADDRESS, and the "overhang"
-	 * in bits (0 means "full bucket"). 
+	 * continuation entries since the entry doesn't have enough bits.
 	 * The alloc site entries the bucket number in which the object starts. This limits us to
 	 * 4M buckets, so a 32MByte chunk for 8-byte-pitch, etc., which seems
 	 * bearable for the moment. 
@@ -338,11 +332,6 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 		while (!ENTRY_IS_NULL(p_continuation_ent))
 		{ p_continuation_ent += ENTRIES_PER_LAYER(p_chunk_rec); ++layer_num; }
 		assert(layer_num < NLAYERS(p_chunk_rec));
-		
-		//unsigned short thisbucket_size = (end_addr >= BUCKET_RANGE_BASE(p_bucket + 1, p_chunk_rec))
-		//		? 0
-		//		: (char*) end_addr - (char*) BUCKET_RANGE_BASE(p_bucket, p_chunk_rec);
-		//assert(thisbucket_size < 256);
 		
 		unsigned long size_after_first_bucket = size_bytes - thisbucket_size;
 		assert(size_after_first_bucket != 0);
@@ -554,7 +543,6 @@ void
 check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struct big_allocation *container)
 {
 #ifndef NDEBUG
-	/* Walk the bucket */
 	unsigned layer_num = 0;
 	for (struct entry *i_layer = p_bucket;
 			!ENTRY_IS_NULL(i_layer);
@@ -563,38 +551,41 @@ check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struc
 		// we should never need to go beyond the last layer
 		assert(layer_num < NLAYERS(p_chunk_rec));
 
-		unsigned short thisbucket_size = i_layer->regular.mod >> 8;
-		unsigned short modulus = i_layer->regular.mod & 0xff;
-
-		assert(modulus < (1u << p_chunk_rec->log_pitch));
-		
 		if (IS_CONTINUATION_ENTRY(i_layer))
 		{
+			assert(i_layer->continuation.size_in_bucket != 0);
 			/* Check that the *previous* bucket contains the object start */
 			assert(get_start_from_continuation(i_layer, p_bucket, p_chunk_rec, container,
 					NULL, NULL, NULL));
+		} else {
+			unsigned short modulus = i_layer->regular.mod & 0xff;
+			unsigned short thisbucket_size = i_layer->regular.mod >> 8; // ZMTODO REMOVE
+
+			assert(modulus < (1u << p_chunk_rec->log_pitch));
+
+			/* Check we don't overlap with anything else in this bucket. */
+			for (struct entry *i_earlier_layer = p_bucket;
+				i_earlier_layer != i_layer;
+				i_earlier_layer += ENTRIES_PER_LAYER(p_chunk_rec))
+			{
+
+				const unsigned our_end = modulus + thisbucket_size;
+
+				if(IS_CONTINUATION_ENTRY(i_earlier_layer))
+				{
+					assert(i_earlier_layer->continuation.size_in_bucket != 0);
+				} else {
+					const unsigned short thisbucket_earlier_size = i_earlier_layer->regular.mod >> 8;
+					const unsigned short earlier_modulus = i_earlier_layer->regular.mod & 0xff;
+					const unsigned earlier_end = earlier_modulus + thisbucket_earlier_size;
+
+					// conventional overlap
+					assert(!(earlier_end > modulus && earlier_modulus < our_end));
+					assert(!(our_end > earlier_modulus && modulus < earlier_end));
+				}				
+			}
 		}
 		
-		/* Check we don't overlap with anything else in this bucket. */
-		for (struct entry *i_earlier_layer = p_bucket;
-			i_earlier_layer != i_layer;
-			i_earlier_layer += ENTRIES_PER_LAYER(p_chunk_rec))
-		{
-			unsigned short thisbucket_earlier_size = i_earlier_layer->regular.mod >> 8;
-			unsigned short earlier_modulus = i_earlier_layer->regular.mod & 0xff;
-
-			// note that either entry might be a continuation entry
-			// ... in which case zero-size means "the whole bucket"
-			assert(!(IS_CONTINUATION_ENTRY(i_earlier_layer) && thisbucket_earlier_size == 0));
-			assert(!(IS_CONTINUATION_ENTRY(i_layer) && thisbucket_size == 0));
-
-			unsigned earlier_end = earlier_modulus + thisbucket_earlier_size;
-			unsigned our_end = modulus + thisbucket_size;
-			
-			// conventional overlap
-			assert(!(earlier_end > modulus && earlier_modulus < our_end));
-			assert(!(our_end > earlier_modulus && modulus < earlier_end));
-		}
 	}
 
 #endif
@@ -620,6 +611,8 @@ static void delete_suballocated_chunk(struct chunk_rec *p_rec)
 			
 	/* We might want to restore the previous alloc_site bits in the higher-level 
 	 * chunk. But we assume that's been/being deleted, so we don't bother. */
+#else 
+	abort();
 #endif
 }
 

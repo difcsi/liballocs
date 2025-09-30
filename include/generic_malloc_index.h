@@ -19,7 +19,7 @@
 /* A thread-local variable to override the "caller" arguments. 
  * Platforms without TLS have to do without this feature. */
 #ifndef NO_TLS
-extern __thread void *__current_allocsite;
+extern __thread void *__current_allocsite; // OR Uniqtype
 extern __thread void *__current_allocfn;
 extern __thread size_t __current_allocsz;
 extern __thread int __currently_freeing;
@@ -778,8 +778,8 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		// it a dynamically-sized alloc with a uniqtype.
 		// This means we're the first query to rewrite the alloc site,
 		// and is the client's queue to go poking in the insert.
-		p_ins->initial.unused = 0;
-		p_ins->initial.alloc_site = (uintptr_t) alloc_uniqtype /* | 0x0ul */;
+		p_ins->with_type.alloc_site_id = 1; // ZMTODO: ID
+		p_ins->with_type.uniqtype_shifted = (uintptr_t) alloc_uniqtype >> 4 /* | 0x0ul */;
 		/* How do we get the id? Doing a binary search on the by-id spine is
 		 * okay because there will be very few of them. We don't want to do
 		 * a binary search on the table proper. But that's okay. We get
