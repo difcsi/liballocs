@@ -20,7 +20,14 @@
 #if __STDC_VERSION__ >= 201112L
 #define ALIGNOF _Alignof
 #else
+/* Clang barfs at offsetof in a constant expression, e.g. _Static_assert:
+ * "cast that performs the conversions of a reinterpret_cast is not allowed in a constant expression"
+ * --- so we avoid this on Clang. */
+#ifdef __clang__
+#define ALIGNOF(type) __builtin_offsetof (struct { char c; type member; }, member)
+#else
 #define ALIGNOF(type) offsetof (struct { char c; type member; }, member)
+#endif
 #endif
 #endif
 #ifndef PAD_TO_ALIGN
@@ -90,9 +97,19 @@ static inline struct insert *insert_for_chunk(void *userptr, sizefn_t *sizefn)
 
 
 #define LIFETIME_POLICY_FLAG(id) (0x1 << (id))
+
 #define IS_WITH_TYPE(ins) (ins->initial.unused != 0)
 
+/* By convention lifetime policy 0 is the manual deallocation policy */
+#define MANUAL_DEALLOCATION_POLICY 0
+#define MANUAL_DEALLOCATION_FLAG LIFETIME_POLICY_FLAG(MANUAL_DEALLOCATION_POLICY)
+/* Manual deallocation is not an "attached" policy */
+#define HAS_LIFETIME_POLICIES_ATTACHED(lti) ((lti) & ~(MANUAL_DEALLOCATION_FLAG))
 
-#define INSERT_TYPE struct insert // HACK: This and the treating inserts as raw uint64_t's should really go away
+static inline lifetime_insert_t *lifetime_insert_for_chunk(void *userptr, sizefn_t *sizefn)
+{
+	return (void*)0; /* FIXME: restore this */ /* &extended_insert_for_chunk(userptr, sizefn)->lifetime; */
+}
+#define INSERT_TYPE struct insert
 
 #endif

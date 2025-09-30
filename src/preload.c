@@ -220,22 +220,18 @@ void *mmap(void *addr, size_t length, int prot, int flags,
 		return ret;
 	}
 
-	/* We want to hook our own mmaps. However,
+	/* We want to hook our own mmaps. However, the mmap allocator code does
+	 * want to call malloc itself, for its metadata, so we might
+	 * become reentrant, which we *don't* want. Current approach: the mmap
+	 * allocator uses a special "nommap_" private malloc, allocating from a
+	 * fixed pool.
 	 *
-	 * - The mmap allocator does call malloc itself, for its metadata, so we might
-	 * become reentrant at this point, which we *don't* want. E.g. since
-	 * right now we haven't yet returned the mapping we just made
-	 * to the malloc that is calling us, doing another private malloc
-	 * will reentrantly do another mmap.
-	 *
-	 * Current approach: mmap allocator tests for private malloc active, and 
-	 * just does a more minimalist metadata-free bigalloc creation in such cases.
-	 * FIXME: whatever we decide to do here, also do it for mremap and munmap
-	 *
-	 * Note that we're
-	 * not in a signal handler here; this path is only for LD_PRELOAD-based hooking,
-	 * and we don't trap our own mmap syscalls, so things are slightly less hairy than
-	 * they otherwise might be.
+	 * Note that we're not in a signal handler here; this path is only for
+	 * LD_PRELOAD-based hooking. We don't trap our own mmap syscalls, so
+	 * things are slightly less hairy than they otherwise might be. Instead,
+	 * calls to mmap() made from within liballocs will hit mmap() in this file.
+	 * On the rare occasions when we want a plain mmap without notifying the
+	 * mmap allocator, we can do raw_mmap().
 	 *
 	 * However, what about early calls? When !__liballocs_systrap_is_initialized,
 	 * we will have to later do a /proc/.../maps pass to fill in bigallocs. If we
@@ -245,17 +241,14 @@ void *mmap(void *addr, size_t length, int prot, int flags,
 	 * anonymous mappings even though one of ours will have 'caller' set so will
 	 * not be mergeable by the mapping_sequence code.
 	 *
-	 * We want to trap the early mmap self-calls because we need to see the bigalloc
-	 * that our private malloc
+	 * We want to hook the early mmap self-calls because we need to see the bigalloc
+	 * that our private mallocs are using.
 	 */
 
 	if (!MMAP_RETURN_IS_ERROR(ret))
 	{
-		if (!__liballocs_systrap_is_initialized) return ret; // HACK
-		(__liballocs_systrap_is_initialized
-			? __mmap_allocator_notify_mmap
-			: __mmap_allocator_notify_mmap/*_no_private_malloc*/)
-		(ret, addr, length, prot, flags, fd, offset, __builtin_return_address(0));
+		if (!__liballocs_systrap_is_initialized) return ret; // HACK XXX: see above for why "systrapping not init'd" here is "too early"
+		__mmap_allocator_notify_mmap(ret, addr, length, prot, flags, fd, offset, __builtin_return_address(0));
 	}
 	else
 	{
@@ -282,7 +275,7 @@ int munmap(void *addr, size_t length)
 		assert(orig_munmap);
 	}
 	
-	if (!__liballocs_systrap_is_initialized)
+	if (!__liballocs_systrap_is_initialized)  // XXX: see above for why "systrapping not init'd" here means "too early"
 	{
 		return orig_munmap(addr, length);
 	}
@@ -297,7 +290,7 @@ int munmap(void *addr, size_t length)
 	}
 }
 
-void *mremap(void *old_addr, size_t old_size, size_t new_size, int flags, ... /* void *new_address */)
+void *mremap(void *old_addr, size_t old_size, size_t new_size, int mremap_flags, ... /* void *new_address */)
 {
 	static void *(*orig_mremap)(void *, size_t, size_t, int, ...);
 	va_list ap;
@@ -307,29 +300,44 @@ void *mremap(void *old_addr, size_t old_size, size_t new_size, int flags, ... /*
 		assert(orig_mremap);
 	}
 	
-	void *new_address = MAP_FAILED;
-	if (flags & MREMAP_FIXED)
+	void *requested_new_addr = MAP_FAILED;
+	if (mremap_flags & MREMAP_FIXED)
 	{
-		va_start(ap, flags);
-		new_address = va_arg(ap, void *);
+		va_start(ap, mremap_flags);
+		requested_new_addr = va_arg(ap, void *);
 		va_end(ap);
 	}
-	
-#define DO_ORIG_CALL ((flags & MREMAP_FIXED)  \
-			? orig_mremap(old_addr, old_size, new_size, flags, new_address) \
-			: orig_mremap(old_addr, old_size, new_size, flags))
-	
-	if (!__liballocs_systrap_is_initialized)
+
+	if (&__liballocs_nudge_mmap)
+	{
+		/* We don't have a prot, flags, fd or offset... or possibly even an addr.
+		 * Just fake them. */
+		int prot = 0;
+		int flags = 0;
+		void *addr;
+		if (requested_new_addr == MAP_FAILED) addr = NULL; else addr = requested_new_addr;
+		off_t offset = 0;
+		int fd = -1;
+		__liballocs_nudge_mmap(&addr, &/*length*/new_size, &prot, &flags, &fd, &offset, __builtin_return_address(0));
+		/* If our nudger wants to force the address, we accommodate it mremapwise. */
+		if (addr != NULL) { requested_new_addr = addr; mremap_flags |= MREMAP_FIXED; }
+		/* FIXME: the nudger might have changed fd or prot or flags... what to do then? */
+	}
+#define DO_ORIG_CALL ((mremap_flags & MREMAP_FIXED)  \
+			? orig_mremap(old_addr, old_size, new_size, mremap_flags, requested_new_addr) \
+			: orig_mremap(old_addr, old_size, new_size, mremap_flags))
+	if (!__liballocs_systrap_is_initialized) // XXX: see above for why "systrapping not init'd" here is "too early"
 	{
 		return DO_ORIG_CALL;
 	}
 	else
 	{
 		void *ret = DO_ORIG_CALL;
-		if (ret != MAP_FAILED)
+		if (!MMAP_RETURN_IS_ERROR(ret))
 		{
-			__mmap_allocator_notify_mremap_after(ret, old_addr, old_size, 
-					new_size, flags, new_address, __builtin_return_address(0));
+			void *new_addr = ret;
+			__mmap_allocator_notify_mremap(new_addr, old_addr, old_size,
+					new_size, mremap_flags, requested_new_addr, __builtin_return_address(0));
 		}
 		return ret;
 	}
@@ -375,8 +383,11 @@ void abort(void)
 	int pid = raw_getpid();
 	write_decint(pid);
 	write_string(", from address ");
-	write_ulong((unsigned long) __builtin_return_address(0));
-	write_string(", in 10 seconds\n");
+	const char *formatted = format_symbolic_address((char*) __builtin_return_address(0) - CALL_INSTR_LENGTH);
+	raw_write(2, formatted, strlen(formatted));
+	write_string(" (");
+	write_ulong((unsigned long) ((char*) __builtin_return_address(0) - CALL_INSTR_LENGTH));
+	write_string("), in 10 seconds\n");
 
 	sleep(10);
 	raw_kill(pid, 6);

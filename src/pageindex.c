@@ -3,9 +3,11 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <link.h>
+#include <signal.h>
 #include <string.h>
 #include <wchar.h>
 #include <unistd.h>
+#include <errno.h>
 #include "raw-syscalls-defs.h"
 #include "librunt.h"
 #include "relf.h"
@@ -68,7 +70,7 @@ static int bigalloc_compare_toplevel(struct big_allocation *b1, struct big_alloc
 }
 static void sanity_check_bigallocs_toplevel(void)
 {
-	struct big_allocation *b = __liballocs_private_malloc_bigalloc;
+	struct big_allocation *b = __liballocs_private_nommap_malloc_bigalloc;
 	if (!b) return;
 	bitmap_word_t bitmap[NBIGALLOCS / 8*sizeof(bitmap_word_t)];
 	memset(bitmap, 0, sizeof bitmap);
@@ -250,6 +252,81 @@ report_failure_and_abort:
 #endif
 }
 
+const int the_signal = SIGBUS;
+static struct sigaction oldaction; /* We will restore this... */
+
+/* FIXME: we should really use some handler chaining, not
+ * just clobbering whatever handler pre-exists. libcrunch
+ * needs its own handler, and the guest program may too. */
+static void handle_signal(int n, siginfo_t *info, void *ucontext)
+{
+	/* We must NOT trigger a nested SIGBUS here. In general, any memory allocation
+	 * may do this, if it needs to grab more pages and therefore touch the pageindex.
+	 * So be very conservative about library calls. We do not use debug_printf(). */
+#define     PAGEINDEX_MAPPING_UNIT     COMMON_HUGEPAGE_SIZE
+#define LOG_PAGEINDEX_MAPPING_UNIT LOG_COMMON_HUGEPAGE_SIZE
+	/* If the fault falls within the pageindex area, we map something there.
+	 * Otherwise, don't. */
+	if ((uintptr_t) info->si_addr >= PAGEINDEX_ADDRESS &&
+	    (uintptr_t) info->si_addr <  PAGEINDEX_ADDRESS + PAGEINDEX_SIZE_BYTES)
+	{
+		/* FIXME: check whether we have already mapped something here. */
+		/* Do we want to keep a bitmap of which hugepages of pageindex are
+		 * already mapped? If the pageindex is 2^37 bytes, and a hugepage
+		 * is 2^21 bytes, then there are 2^16 bits in this bitmap, or 2^13
+		 * bytes, which is very manageable for mapping locally. */
+		/* NOTE that we use hugepages only as a convenient unit, i.e. a coarse-
+		 * -grained division of memory -- nothing about our logic depends on matching
+		 * the underlying architecture's hugepage size. */
+		uintptr_t range_base = RELF_ROUND_DOWN_((uintptr_t) info->si_addr, PAGEINDEX_MAPPING_UNIT);
+		uintptr_t range_idx = (range_base - PAGEINDEX_ADDRESS) >> LOG_PAGEINDEX_MAPPING_UNIT;
+		void *ret = raw_mmap((void*) range_base, PAGEINDEX_MAPPING_UNIT,
+			PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED, -1, 0);
+		if ((uintptr_t) ret != range_base)
+		{
+			write_string("failed to map lazily a piece of pageindex at ");
+			write_ulong((uintptr_t) range_base);
+			write_string(" (ret ");
+			write_ulong((uintptr_t) ret);
+			write_string(")\n");
+			abort();
+		}
+		write_string("lazily mapped a piece of pageindex at ");
+		write_ulong((uintptr_t) ret);
+		write_string(" (idx ");
+		write_ulong((unsigned long) range_idx);
+		write_string(")\n");
+		return; // we explicitly resume from the segfault
+	}
+	/* FIXME: be more compositional, w.r.t. other possible handlers (installed
+	 * either before we install ours or after!).
+	 * For now, we want to do whatever would happen if our handler was not installed...
+	 * probably that's just exit. However, exiting has the side effect of disabling
+	 * the core handling path. Instead we disable ourselves and then resume! FIXME: this
+	 * is not foolproof, e.g. if there are concurrent threads futzing with the memory map. */
+	write_string("Signal not handleable by lazy mapping of pageindex\n");
+	//raw_exit(128 + the_signal);
+	sigaction(the_signal, &oldaction, NULL);
+}
+
+/* We use SIGBUS here, as it is more rarely triggered than SIGSEGV and so is
+ * less confusing/disruptive at debug time, while still achieving the intention
+ * of not generating huge core files from the unused pageindex areas. We
+ * memory-map a zero-length temporary file that we immediately unlink. */
+static void install_lazy_pageindex_handler(void)
+{
+	struct sigaction action = {
+		.sa_handler = (void*) &handle_signal,
+		.sa_flags = SA_NODEFER | SA_SIGINFO
+	};
+	int ret = sigaction(the_signal, &action, &oldaction);
+	if (ret != 0)
+	{
+		debug_printf(0, "failed to install signal handler for lazy pageindex mapping");
+		abort();
+	}
+}
+
 __attribute__((constructor(101),visibility("hidden")))
 void __pageindex_init(void)
 {
@@ -288,17 +365,30 @@ void __pageindex_init(void)
 #undef CHAR_TO_PRINT
 		}
 		/* Mmap our region. We map one 16-bit number for every page in the user address region. */
-		/* HACK: always place at 0x410000000000, to avoid problems with shadow space.
-		 * The generic malloc index goes at 0x400000000000 
-		 *          and is 2 ** 38 bytes or   0x4000000000 in size
-		 *          but we don't want to assume too much about its size.
-		 */
-		pageindex = MEMTABLE_NEW_WITH_TYPE_AT_ADDR(bigalloc_num_t, PAGE_SIZE, (void*) 0,
-			(void*) (MAXIMUM_USER_ADDRESS + 1), (const void *) 0x410000000000ul);
-		if (pageindex == MAP_FAILED) abort();
-		debug_printf(3, "pageindex at %p\n", pageindex);
-
-		create_private_malloc_heap();
+		/* HACK: always place at a known address (see pageindex.h, but it's 0x410000000000),
+		 * to avoid problems with libcrunch shadow space. */
+		if (getenv("LIBALLOCS_PAGEINDEX_NO_LAZY_MAPPING"))
+		{
+			pageindex = MEMTABLE_NEW_WITH_TYPE_AT_ADDR(bigalloc_num_t, PAGE_SIZE, (void*) 0,
+				(void*) (MAXIMUM_USER_ADDRESS + 1), (const void *) PAGEINDEX_ADDRESS);
+			if (pageindex == MAP_FAILED) abort();
+			debug_printf(3, "pageindex at %p (mapped eagerly)\n", pageindex);
+		}
+		else
+		{
+			int fd = memfd_create("pageindex-lazy-region", 0);
+			if (fd == -1) abort();
+			pageindex = (bigalloc_num_t *) mmap((void*) PAGEINDEX_ADDRESS,
+				sizeof (bigalloc_num_t) * ((uintptr_t)(MAXIMUM_USER_ADDRESS + 1) >> LOG_PAGE_SIZE),
+				PROT_READ|PROT_WRITE,
+				MAP_PRIVATE|MAP_FIXED|MAP_NORESERVE,
+				fd, 0);
+			if (pageindex == MAP_FAILED) { debug_printf(0, "Failed to map memfd fd %d (%s)\n", fd, strerror(errno)); abort(); }
+			close(fd);
+			install_lazy_pageindex_handler();
+			debug_printf(3, "pageindex at %p (to be mapped lazily)\n", pageindex);
+		}
+		create_private_nommap_malloc_heap();
 	}
 }
 
@@ -671,7 +761,7 @@ static void bigalloc_init(struct big_allocation *b, const void *ptr, size_t size
 	SANITY_CHECK_BIGALLOC(b);
 }
 
-#define START __liballocs_private_malloc_bigalloc
+#define START __liballocs_private_nommap_malloc_bigalloc
 #define search_xwards_until_p(dir, p) \
     prev = NULL; \
 	for (cur = START; \

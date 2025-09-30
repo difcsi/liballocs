@@ -164,7 +164,7 @@ CFLAGS += -I$(srcdir)
 # different outputs involve different subgroups of objects
 CORE_OBJS := cache.o allocsites.o pageindex.o addrlist.o uniqtype-bfs.o \
   meta-dso.o uniqtype-util.o counters.o rt-uniqtypes.o util.o private-libc.o err.o query.o walk.o \
-  liballocs.o workarounds.o $(filter-out user2hook.o,$(MALLOCHOOKS_OBJS)) \
+  init.o workarounds.o $(filter-out user2hook.o,$(MALLOCHOOKS_OBJS)) \
   $(patsubst $(srcdir)/allocators/%.c,allocators/%.o,$(wildcard $(srcdir)/allocators/*.c))
 ifneq ($(USE_REAL_LIBUNWIND),)
 LDLIBS += -lunwind -lunwind-`uname -m`
@@ -193,14 +193,14 @@ SYSTRAP_OBJS := systrap.o
 else
 SYSTRAP_OBJS := systrap.o
 endif
-DLMALLOC_A_OBJS := dlmalloc.o dlmalloc-ext.o
+DLMALLOC_OBJS := nommap-dlmalloc.o dlmalloc.o dlmalloc-ext.o nommap-dlmalloc-ext.o
 
 # Generate deps.
-ALL_OBJS := $(CORE_OBJS) $(NOPRELOAD_OBJS) $(PRELOAD_OBJS) $(SYSTRAP_OBJS) $(DLMALLOC_A_OBJS)
+ALL_OBJS := $(CORE_OBJS) $(NOPRELOAD_OBJS) $(PRELOAD_OBJS) $(SYSTRAP_OBJS) $(DLMALLOC_OBJS)
 # enumerate src files backwards from our .o files
-DEP_OBJS := $(ALL_OBJS)
+DEP_OBJS := $(filter-out nommap-%,$(ALL_OBJS))
 C_SRC := $(sort $(patsubst %.o,%.c,$(DEP_OBJS)))
-# Becuase of our vpath'd rules, we can't do patsubst on the source path to get the
+# Because of our vpath'd rules, we can't do patsubst on the source path to get the
 # obj path... $< will be something wacky. Instead, work from the object file.
 # All our objs are from C files, for now
 C_OBJ_DEPS := $(foreach f,$(DEP_OBJS),$(patsubst %.o,%.d,$(f)))
@@ -224,18 +224,56 @@ endif
 $(ALL_OBJS): CFLAGS += -no-integrated-cpp \
 -wrapper $(TOOLSUB)/wrapper/example/constructor-priority-checker/wrapper
 
-# we include our own malloc impl, for which we use dlmalloc
-# of which libsystrap already has a copy, so borrow that (HACK)
+# We include our own malloc impl, for which we use dlmalloc,
+# of which libsystrap already has a copy in its source tree, so borrow that (HACK).
+#
+# We actually include two copies of dlmalloc:
+# dlmalloc...        <-- uses mmap and not morecore
+# nommap_dlmalloc... <-- uses morecore emulation, not mmap
+# Each of these, we wrap so that we are meta-complete and have some uniformity
+# across all malloc chunks in the program (we can reflect on all of them, identify
+# the underlying malloc/free functions, etc).
 vpath dlmalloc.c $(LIBSYSTRAP)/../src # HACK: actually in trap-syscalls but should be in libsystrap
-dlmalloc.a: dlmalloc.o
-dlmalloc.o: CFLAGS += -include $(srcdir)/dlmalloc-includes.h -DHAVE_MMAP=0 -DHAVE_MORECORE=1 -DMSPACES=1 -DMORECORE=emulated_sbrk -DUSE_DL_PREFIX -fPIC
-dlmalloc-ext.o: CFLAGS += -fPIC
-PRIVATE_MALLOC_WRAPPED_LDFLAGS := -Wl,--wrap,dlmalloc -Wl,--wrap,dlcalloc \
- -Wl,--wrap,dlfree -Wl,--wrap,dlrealloc -Wl,--wrap,dlmemalign -Wl,--wrap,dlposix_memalign \
- -Wl,--wrap,dlmalloc_usable_size
+dlmalloc.a: dlmalloc.o nommap-dlmalloc.o
+dlmalloc.o:        CFLAGS += -include $(srcdir)/dlmalloc-includes.h -DHAVE_MMAP=1 -DHAVE_MORECORE=0 -DMSPACES=0                          -DUSE_DL_PREFIX -fPIC
+nommap-dlmalloc.o: CFLAGS += -include $(srcdir)/dlmalloc-includes.h -DHAVE_MMAP=0 -DHAVE_MORECORE=1 -DMSPACES=1 -DMORECORE=emulated_sbrk -DUSE_DL_PREFIX -fPIC \
+	-Ddlcalloc=nommap_dlcalloc \
+	-Ddlfree=nommap_dlfree \
+	-Ddlmalloc=nommap_dlmalloc \
+	-Ddlmemalign=nommap_dlmemalign \
+	-Ddlposix_memalign=nommap_dlposix_memalign \
+	-Ddlrealloc=nommap_dlrealloc \
+	-Ddlrealloc_in_place=nommap_dlrealloc_in_place \
+	-Ddlvalloc=nommap_dlvalloc \
+	-Ddlpvalloc=nommap_dlpvalloc \
+	-Ddlmallinfo=nommap_dlmallinfo \
+	-Ddlmallopt=nommap_dlmallopt \
+	-Ddlmalloc_trim=nommap_dlmalloc_trim \
+	-Ddlmalloc_stats=nommap_dlmalloc_stats \
+	-Ddlmalloc_usable_size=nommap_dlmalloc_usable_size \
+	-Ddlmalloc_footprint=nommap_dlmalloc_footprint \
+	-Ddlmalloc_max_footprint=nommap_dlmalloc_max_footprint \
+	-Ddlmalloc_footprint_limit=nommap_dlmalloc_footprint_limit \
+	-Ddlmalloc_set_footprint_limit=nommap_dlmalloc_set_footprint_limit \
+	-Ddlmalloc_inspect_all=nommap_dlmalloc_inspect_all \
+	-Ddlindependent_calloc=nommap_dlindependent_calloc \
+	-Ddlindependent_comalloc=nommap_dlindependent_comalloc \
+	-Ddlbulk_free=nommap_dlbulk_free
+# FIXME: the above list of symbols is snarfed from dlmalloc.c and may be prone to change.
+# We manually added `dlbulk_free'
+nommap-dlmalloc-ext.o dlmalloc-ext.o: CFLAGS += -fPIC
+nommap-dlmalloc-ext.o: CFLAGS += -DNOMMAP
+nommap-dlmalloc.o: dlmalloc.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+nommap-dlmalloc-ext.o: dlmalloc-ext.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+comma := ,
+PRIVATE_MALLOC_WRAPPED_LDFLAGS := $(foreach s, \
+  dlmalloc dlcalloc dlfree dlrealloc dlmemalign dlposix_memalign dlmalloc_usable_size,\
+-Wl$(comma)--wrap$(comma)$(s) -Wl$(comma)--wrap$(comma)nommap_$(s))
 # We put dlmalloc in a library so that --exclude-libs=dlmalloc.a will hide its symbols
 # in our output .so, so that they don't override anything in the rest of the program.
-# NOTE: __private_strdup is defined explicitly in liballocs.c and dummyweaks.c
+# NOTE: __private_strdup is defined explicitly in private-libc.c and dummyweaks.c
 # NOTE: we need to defsym to the __wrap_* functions, because of the way
 # --wrap and --defsym interact: references generated by --defsym are *not*
 # wrapped, unlike references that were in the file already.
@@ -247,7 +285,7 @@ $(SOLIB_TARGETS): dlmalloc.a
 $(SOLIB_TARGETS): EXCLUDE_LIBS += dlmalloc.a:libsystrap.a
 #$(SOLIB_TARGETS): LDFLAGS += -Wl,-z,initfirst
 
-LIBALLOCS_PRELOAD_A_OBJS := dlmalloc-ext.o $(CORE_OBJS) $(PRELOAD_OBJS)
+LIBALLOCS_PRELOAD_A_OBJS := dlmalloc-ext.o nommap-dlmalloc-ext.o $(CORE_OBJS) $(PRELOAD_OBJS)
 LIBALLOCS_A_OBJS := $(SYSTRAP_OBJS) $(CORE_OBJS) $(NOPRELOAD_OBJS) $(PRELOAD_OBJS)
 
 LIBSYSTRAP_A := $(LIBSYSTRAP)/build/$(shell uname -m)/libsystrap.a

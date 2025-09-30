@@ -49,7 +49,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                 # allocfns are "(.*)\((.*)\)(.?)
                 # subfreefns are "(.*)\((.*)\)(->[a-zA-Z0-9_]+)"
                 # l1freefns are "(.*)\((.*)\)"
-                m = re.match("(.*)\((.*)\)(->[a-zA-Z0-9_]+|.)?", fn)
+                m = re.match("(.*)\\((.*)\\)(->[a-zA-Z0-9_]+|.)?", fn)
                 fnName = m.groups()[0]
                 syms += [fnName]
         return syms
@@ -190,7 +190,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                 if ret2 != 0:
                     errfile.write("Metadata build failed, so will not strip relocs from output binary")
                 if (ret2 != 0 or "DEBUG_CC" in os.environ):
-                    sys.stderr.write("printing to %s\n" % errfile)
+                    sys.stderr.write("\nstatus %d; printing Makefile.meta errors %sto %s\n" % (ret2, "(if any) " if "DEBUG_CC" in os.environ else "", errfile))
                     self.printErrors(errfile)
                 # Now if the metadata build succeeded, and if we're asked to
                 # strip relocs
@@ -357,7 +357,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
 
                 # generate caller-side alloc stubs
                 for allocFn in self.allAllocFns():
-                    m = re.match("(.*)\((.*)\)(.?)", allocFn)
+                    m = re.match("(.*)\\((.*)\\)(.?)", allocFn)
                     fnName = m.groups()[0]
                     fnSig = m.groups()[1]
                     def tupify(s):
@@ -405,7 +405,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                     stubsfile.flush()
                 # also do caller-side subfree wrappers
                 for freeFn in self.allSubFreeFns():
-                    m = re.match("(.*)\((.*)\)(->([a-zA-Z0-9_]+))", freeFn)
+                    m = re.match("(.*)\\((.*)\\)(->([a-zA-Z0-9_]+))", freeFn)
                     fnName = m.groups()[0]
                     fnSig = m.groups()[1]
                     allocFnName = m.groups()[3]
@@ -421,7 +421,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                         #stubsfile.write("make_void_callee_wrapper(%s)\n" % (fnName))
                 # also do caller-side free (non-sub) -wrappers
                 for freeFn in self.allL1OrWrapperFreeFns():
-                    m = re.match("(.*)\((.*)\)", freeFn)
+                    m = re.match("(.*)\\((.*)\\)", freeFn)
                     fnName = m.groups()[0]
                     fnSig = m.groups()[1]
                     ptrndx = fnSig.find('P')
@@ -462,7 +462,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                 extraFlags += ["-fPIC"]
                 # WHERE do we get relf.h, in the librunt era?
                 # Bit of a hack: in the contrib. FIXME FIXME.
-                stubs_pp_cmd = self.getPlainCCompilerCommand() + ["-std=c11", "-E", "-Wp,-dD", "-Wp,-P"] \
+                stubs_pp_cmd = self.getPlainCCompilerCommand() + ["-gdwarf-4", "-std=c11", "-E", "-Wp,-dD", "-Wp,-P"] \
                     + extraFlags + ["-o", stubs_pp, \
                     "-I" + self.getLibAllocsBaseDir() + "/tools", \
                     "-I" + self.getLibAllocsBaseDir() + "/include", \
@@ -494,7 +494,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                 #    self.debugMsg("Could not sed stubs file %s: sed returned %d\n" \
                 #        % (stubs_pp, ret_stubs_sed))
                 #    exit(1)
-                stubs_cc_cmd = self.getPlainCCompilerCommand() + ["-std=c11", "-g"] + extraFlags + ["-c", "-o", stubs_bin, \
+                stubs_cc_cmd = self.getPlainCCompilerCommand() + ["-gdwarf-4", "-std=c11", "-g"] + extraFlags + ["-c", "-o", stubs_bin, \
                     "-I" + self.getLibAllocsBaseDir() + "/tools", \
                     stubs_pp]
                 self.debugMsg("Compiling stubs file %s to %s with command %s\n" \
@@ -575,6 +575,9 @@ class AllocsCompilerWrapper(CompilerWrapper):
         if "CC" in os.environ:# and os.environ["CC"].endswith(os.path.basename(sys.argv[0])):
            del os.environ["CC"]
         self.debugMsg(sys.argv[0] + " called with args  " + " ".join(sys.argv) + "\n")
+
+        if self.onlyPreprocessing():
+            self.debugMsg("We are only preprocessing, so we won't do anything liballocs-related.")
 
         if Phase.LINK in self.enabledPhases:
             self.debugMsg("We are a link command\n")
@@ -686,7 +689,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
                     % (usedTypesFileName, e.returncode, str(e.output)))
             usedTypesObjFileName = self.getOutputFilename(Phase.LINK) + ".usedtypes.o"
             usedTypesCcCmd = self.getPlainCCompilerCommand() + self.getUsedtypesCompileArgs() + \
-                ["-std=c11"] + [usedTypesFileName] + ["-c", "-o", usedTypesObjFileName]
+                ["-gdwarf-4", "-std=c11"] + [usedTypesFileName] + ["-c", "-o", usedTypesObjFileName]
             self.debugMsg("Calling " + " ".join(usedTypesCcCmd) + "\n")
             try:
                 outp = subprocess.check_output(usedTypesCcCmd)

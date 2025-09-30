@@ -74,8 +74,7 @@ const char *format_symbolic_address(const void *addr);
 
 #include "pageindex.h"
 
-/* FIXME: this should probably be a flexible array member, to
- * allow for DSOs that have tons of segments.*/
+/* FIXME: this should probably be a flexible array member. */
 #define MAPPING_SEQUENCE_MAX_LEN 8
 struct mapping_sequence
 {
@@ -88,19 +87,20 @@ struct mapping_sequence
 _Bool __augment_mapping_sequence(struct mapping_sequence *cur, 
 	void *begin, void *end, int prot, int flags, off_t offset, const char *filename,
 	void *caller);
-struct big_allocation *__add_mapping_sequence_bigalloc_nocopy(struct mapping_sequence *seq);
+struct big_allocation *__add_mapping_sequence_bigalloc_with_seq(struct mapping_sequence *seq,
+	void (*free_fn)(void*));
 
+extern void *executable_end_addr;
+extern struct big_allocation *executable_file_bigalloc;
+extern struct big_allocation *executable_data_segment_bigalloc;
+extern uintptr_t executable_data_segment_start_addr;
 /* Normally, the mapping that contiguously precedes the program break
  * is the executable's mapping. However, in some cases where allocsld
  * is 'the program' from the kernel's p.o.v., the program break is above
  * the dynamic linker but 'the executable' (from our p.o.v.) is the binary
  * loaded by the dynamic linker. So this may or may not alias
  * executable_mapping_bigalloc. */
-extern void *executable_end_addr;
 extern struct big_allocation *brk_mapping_bigalloc;
-extern struct big_allocation *executable_file_bigalloc;
-extern struct big_allocation *executable_data_segment_bigalloc;
-extern uintptr_t executable_data_segment_start_addr;
 
 struct dl_phdr_info; /* for include contexts that lack this */
 void mmap_replacement(struct generic_syscall *s, post_handler *post);
@@ -108,6 +108,7 @@ void munmap_replacement(struct generic_syscall *s, post_handler *post);
 void mremap_replacement(struct generic_syscall *s, post_handler *post);
 void __liballocs_systrap_init(void);
 void __systrap_brk_hack(void);
+
 int load_types_for_one_object(struct dl_phdr_info *, size_t, void *data);
 int load_and_init_allocsites_for_one_object(struct dl_phdr_info *, size_t, void *data);
 int link_stackaddr_and_static_allocs_for_one_object(struct dl_phdr_info *, size_t, void *data);
@@ -124,18 +125,27 @@ extern _Bool __thread __private_realloc_active;
 extern _Bool __thread __private_memalign_active;
 extern _Bool __thread __private_posix_memalign_active;
 extern _Bool __thread __private_malloc_usable_size_active;
+#define PRIVATE_MALLOC_ALIGN 16
+#define LOG_PRIVATE_MALLOC_ALIGN 4
+
+extern struct allocator __private_malloc_allocator;
 void *__private_malloc(size_t);
 void *__private_realloc(void*, size_t);
 void __private_free(void *);
-void __private_malloc_init(void) __attribute__((constructor(101)));
-extern void *__private_malloc_heap_base;
-extern void *__private_malloc_heap_limit;
-extern struct big_allocation *__liballocs_private_malloc_bigalloc;
-extern struct allocator __private_malloc_allocator;
-#define PRIVATE_MALLOC_ALIGN 16
-#define LOG_PRIVATE_MALLOC_ALIGN 4
-void __private_malloc_set_metadata(void *ptr, size_t size, const void *allocsite);
-struct big_allocation *create_private_malloc_heap(void);
+
+char *__private_strndup(const char *, size_t);
+
+void __private_nommap_malloc_set_metadata(void *ptr, size_t size, const void *allocsite);
+struct big_allocation *create_private_nommap_malloc_heap(void);
+extern void *__private_nommap_malloc_heap_base;
+extern void *__private_nommap_malloc_heap_limit;
+extern struct big_allocation *__liballocs_private_nommap_malloc_bigalloc;
+
+void *__private_nommap_malloc(size_t);
+void *__private_nommap_calloc(size_t, size_t);
+void *__private_nommap_realloc(void*, size_t);
+void __private_nommap_free(void *);
+extern struct allocator __private_nommap_malloc_allocator;
 
 extern FILE *stream_err;
 FILE *get_stream_err(void);
@@ -163,8 +173,6 @@ struct frame_uniqtype_and_offset
 };
 
 #define META_OBJ_SUFFIX "-meta.so"
-_Bool is_meta_object_for_lib(struct link_map *maybe_types, struct link_map *l);
-
 #define MAX_EARLY_LIBS 128
 extern struct link_map *early_lib_handles[MAX_EARLY_LIBS];
 
@@ -201,10 +209,14 @@ void __liballocs_post_systrap_init(void);
 /* If this weak function is defined, it will be called when we've loaded
  * the metadata for one object. */
 int __hook_loaded_one_object_meta(struct dl_phdr_info *info, size_t size, void *meta_object_handle) __attribute__((weak));
-int load_and_init_all_metadata_for_one_object(struct dl_phdr_info *info, size_t size, void *out_meta_handle);
+struct load_and_init_all_metadata_args
+{
+	struct allocs_file_metadata *in_meta;
+	void *out_handle;
+};
+int load_and_init_all_metadata_for_one_object(struct dl_phdr_info *info, size_t size, void *inout_args);
 
-const char *meta_libfile_name(const char *objname) __attribute__((visibility("hidden")));
-int find_and_open_meta_libfile(const char *objname) __attribute__((visibility("hidden")));
+int find_and_open_meta_libfile(struct allocs_file_metadata *meta) __attribute__((visibility("hidden")));
 
 void __notify_copy(void *dest, const void *src, unsigned long n);
 void __notify_free(void *dest);
@@ -226,6 +238,10 @@ static struct uniqtype *get_type(void *obj) \
 #ifndef MAX
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #endif
+
+/* HACK used in diagnostics that use __builtin_return_address(), e.g.
+ * to avoid misattributing a call to <abort> to the next function in .text...*/
+#define CALL_INSTR_LENGTH 5 /* FIXME: sysdep */
 
 extern void *__liballocs_rt_uniqtypes_obj;
 extern ElfW(Sym) *__liballocs_rt_uniqtypes_dynsym;
