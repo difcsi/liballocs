@@ -355,7 +355,7 @@ ALLOC_EVENT(post_successful_alloc)(void *allocptr, size_t modified_size, size_t 
 	if (initial_lifetime_policies) /* always statically known but we can't #ifdef here */ \
 	{ \
 		lifetime_insert_t *lti = lifetime_insert_for_chunk(allocptr /* == userptr */, sizefn); \
-		if (lti) *lti |= initial_lifetime_policies; \
+		if (lti) lti->with_type.lifetime_policies |= initial_lifetime_policies; \
 		/* GitHub issue #21: make initial_lifetime_policies caller-sensitive somehow? */ \
 	} \
 } \

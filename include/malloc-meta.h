@@ -107,7 +107,8 @@ static inline struct insert *insert_for_chunk(void *userptr, sizefn_t *sizefn)
 typedef struct insert lifetime_insert_t;
 static inline lifetime_insert_t *lifetime_insert_for_chunk(void *userptr, sizefn_t *sizefn)
 {
-	return (void*)0; /* FIXME: restore this */ /* &extended_insert_for_chunk(userptr, sizefn)->lifetime; */
+	return insert_for_chunk(userptr,sizefn);
+	//return (void*)0; /* FIXME: restore this */ /* &extended_insert_for_chunk(userptr, sizefn)->lifetime; */
 }
 #define INSERT_TYPE struct insert
 
