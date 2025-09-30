@@ -300,7 +300,7 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 	// we should never need to go beyond the last layer
 	assert(layer_num < NLAYERS(p_chunk_rec));
 	
-	p_ent->regular.alloc_site = __current_allocsite;
+	p_ent->regular.alloc_site = (unsigned long) __current_allocsite;
 	
 	/* We also need to represent the object's size somehow. We choose to use 
 	 * continuation entries since the entry doesn't have enough bits.
@@ -802,8 +802,7 @@ static liballocs_err_t get_info(void *obj, struct big_allocation *b,
 		++__liballocs_aborted_unindexed_heap;
 		return &__liballocs_err_unindexed_heap_object;
 	}
-	
-	return extract_and_output_alloc_site_and_type(heap_info, out_type, (void**) out_site);
+	return extract_and_output_alloc_site_and_type((struct insert *) heap_info, out_type, (void**) out_site); // HACK
 }
 
 struct allocator __generic_small_allocator = {
