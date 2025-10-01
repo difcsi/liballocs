@@ -559,7 +559,7 @@ check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struc
 					NULL, NULL, NULL));
 		} else {
 			unsigned short modulus = i_layer->regular.mod & 0xff;
-			unsigned short thisbucket_size = i_layer->regular.mod >> 8; // ZMTODO REMOVE
+			unsigned short thisbucket_size = i_layer->regular.mod >> 8;
 
 			assert(modulus < (1u << p_chunk_rec->log_pitch));
 

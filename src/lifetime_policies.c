@@ -72,7 +72,7 @@ void __liballocs_attach_lifetime_policy(int policy_id, const void *obj)
 	assert(policy_id >= 0);
 
 	INSERT_TYPE *lti = get_lifetime_insert_info(obj, NULL, NULL);
-	if (lti) lti->with_type.lifetime_policies |= LIFETIME_POLICY_FLAG(policy_id); // ZMTODO
+	if (lti) lti->with_type.lifetime_policies |= LIFETIME_POLICY_FLAG(policy_id);
 }
 
 void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
@@ -85,7 +85,7 @@ void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
 	if (lti)
 	{
 		lti->with_type.lifetime_policies &= ~LIFETIME_POLICY_FLAG(policy_id);
-		if (!*lti) free_fn((struct allocated_chunk *) allocstart); //ZMTODO
+		if (!lti->with_type.lifetime_policies) free_fn((struct allocated_chunk *) allocstart);
 	}
 }
 

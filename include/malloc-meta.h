@@ -80,7 +80,7 @@ typedef unsigned long /*size_t*/ sizefn_t(void*);
 static inline struct insert *
 insert_for_chunk_and_caller_usable_size(void *userptr, /*size_t*/ unsigned long caller_usable_size)
 {
-	/*uintptr_t*/ unsigned long long insertptr	
+	/*uintptr_t*/ unsigned long long insertptr
 	 = (unsigned long long)((char*) userptr + caller_usable_size);
 	return (struct insert *)insertptr;
 }
@@ -108,7 +108,6 @@ typedef struct insert lifetime_insert_t;
 static inline lifetime_insert_t *lifetime_insert_for_chunk(void *userptr, sizefn_t *sizefn)
 {
 	return insert_for_chunk(userptr,sizefn);
-	//return (void*)0; /* FIXME: restore this */ /* &extended_insert_for_chunk(userptr, sizefn)->lifetime; */
 }
 #define INSERT_TYPE struct insert
 
