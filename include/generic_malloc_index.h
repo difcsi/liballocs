@@ -714,7 +714,7 @@ liballocs_err_t __generic_malloc_set_type(struct allocator *a,
 		NULL, NULL, NULL, sizefn);
 	if (!ins) return &__liballocs_err_unindexed_heap_object;
 	ins->with_type.uniqtype_shifted = (uintptr_t) ( (unsigned long) new_type >> 4);
-	ins->with_type.alloc_site_id = 0; // TODO
+	ins->with_type.alloc_site_id = 1; // TODO
 	return NULL;
 }
 
@@ -778,7 +778,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		// it a dynamically-sized alloc with a uniqtype.
 		// This means we're the first query to rewrite the alloc site,
 		// and is the client's queue to go poking in the insert.
-		p_ins->with_type.alloc_site_id = 0; // HACK: Ideally, we would store the id here, but it isn't needed anywhere yet, so this is fine
+		p_ins->with_type.alloc_site_id = 1; // HACK: Ideally, we would store the id here, but it isn't needed anywhere yet, so this is fine
 		p_ins->with_type.uniqtype_shifted = (uintptr_t) alloc_uniqtype >> 4 /* | 0x0ul */;
 		/* How do we get the id? Doing a binary search on the by-id spine is
 		 * okay because there will be very few of them. We don't want to do
@@ -813,7 +813,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		if (p_ins)
 		{
 	#ifdef NDEBUG
-			p_ins->with_type.alloc_site_id = 0; // 
+			p_ins->with_type.alloc_site_id = 1; // 
 			p_ins->with_type.uniqtype_shifted = 0;
 	#endif
 			assert(INSERT_DESCRIBES_OBJECT(p_ins));
