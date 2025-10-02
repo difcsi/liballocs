@@ -116,16 +116,8 @@ AC_ARG_ENABLE([lifetime-policies],
                              [Enable the lifetime extension interface, with at most NB distinct policies, or 8 if NB is not provided [disabled by default]]),
               [case ${enableval} in
                   no) lifetime_policies=0 ;;
-                  yes) lifetime_policies=8 ;;
+                  yes) lifetime_policies=4 ;;
                   *) lifetime_policies=${enableval} ;;
-               esac
-               case ${lifetime_policies} in
-                  0) ;;
-                  8) lifetime_insert_type="uint8_t" ;;
-                  16) lifetime_insert_type="uint16_t" ;;
-                  32) lifetime_insert_type="uint32_t" ;;
-                  64) lifetime_insert_type="uint64_t" ;;
-                  *) AC_MSG_ERROR([bad value ${enableval} for --enable-lifetime-policies])
                esac],
               [lifetime_policies=0])
 AC_ARG_ENABLE([precise-requested-allocsize],
@@ -137,8 +129,7 @@ AS_IF([test "x$enable_fake_libunwind" = "xyes"],
 AS_IF([test $lifetime_policies != 0],
       [AC_DEFINE_UNQUOTED([LIFETIME_POLICIES], [$lifetime_policies],
                           [When lifetime extenstion is available this macro expands to the number of available lifetime policies, else it is undefined])
-       AC_DEFINE_UNQUOTED([LIFETIME_INSERT_TYPE], [$lifetime_insert_type],
-                          [Expands to the type of lifetime inserts])])
+      ])
 AS_IF([test "x$precise_requested_allocsize" = "xyes"],
       [AC_DEFINE([PRECISE_REQUESTED_ALLOCSIZE],1,[If defined, liballocs needs to return the precise requested size on size queries])])
 
