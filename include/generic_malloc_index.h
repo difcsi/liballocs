@@ -770,7 +770,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		{
 			__liballocs_addrlist_add(&__liballocs_unrecognised_heap_alloc_sites, alloc_site);
 		}
-#if 1
+#ifdef NDEBUG
 		// install it for future lookups
 		// FIXME: make this atomic using a union
 		// Is this in a loose state? NO. We always make it strict.
