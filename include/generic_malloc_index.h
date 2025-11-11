@@ -759,8 +759,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 	} else {
 		/* Look up the allocsite's uniqtype, and install it in the heap info 
 		 * (on NDEBUG builds only, because it reduces debuggability a bit). */
-		uintptr_t alloc_site_addr = p_ins->with_type.uniqtype_shifted << 4;
-		void *alloc_site = (void*) alloc_site_addr;
+		void *alloc_site = (void*) p_ins->initial.alloc_site;
 		if (out_site) *out_site = alloc_site;
 		struct allocsite_entry *entry = __liballocs_find_allocsite_entry_at(alloc_site);
 		alloc_uniqtype = entry ? entry->uniqtype : NULL;
