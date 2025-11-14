@@ -66,7 +66,7 @@ jobs:
               libelf-dev python3 git gawk libunwind-dev \
               ocaml ocamlbuild ocaml-findlib \
               clang \
-              libdw-dev binutils-dev libffi-dev \
+              libdw-dev binutils-dev binutils-gold libffi-dev \
               libboost-iostreams-dev libboost-regex-dev \
               libboost-serialization-dev libboost-filesystem-dev \
               pkg-config libglib2.0-dev # <-- for 'simple-multi-alloc' test case only

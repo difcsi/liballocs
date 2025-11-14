@@ -783,7 +783,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		 * okay because there will be very few of them. We don't want to do
 		 * a binary search on the table proper. But that's okay. We get
 		 * everything we need. */
-		allocsite_id_t allocsite_id = __liballocs_allocsite_id((const void *) alloc_site_addr);
+		allocsite_id_t allocsite_id = __liballocs_allocsite_id((const void *) p_ins->initial.alloc_site);
 		if (allocsite_id != (allocsite_id_t) -1)
 		{
 			// what to do with the id?? We have no spare bits...
