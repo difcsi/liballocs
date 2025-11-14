@@ -18,7 +18,7 @@ jobs:
             build-essential libbsd-dev libelf-dev libdw-dev binutils-dev binutils-gold zlib1g-dev \
             autoconf automake libtool pkg-config autoconf-archive \
             g++-10 gcc-10 lib32gcc-10-dev \
-            ocaml ocamlbuild ocaml-findlib libnum-ocaml-dev \
+            opam \
             default-jdk-headless python3 \
             make git gawk gdb wget libc6-dbg \
             libunwind-dev libunwind-dev:i386 linux-libc-dev-i386-cross libc6-dev-i386 \
@@ -30,9 +30,17 @@ jobs:
           cd /usr/bin && ln -sf gcc-10 gcc
           cd /usr/bin && ln -sf g++-10 g++
       
+      - name: Setup OCaml 4.11 with opam
+        run: |
+          opam init --disable-sandboxing -y -a --compiler=4.11.2
+          eval $(opam env)
+          opam install -y ocamlfind ocamlbuild num
+      
       - name: Report OCaml version for debugging
         run: |
-          dpkg -l | grep ocaml
+          eval $(opam env)
+          ocaml --version
+          opam list
       
       - name: Checkout code with submodules
         uses: actions/checkout@v4
@@ -40,10 +48,72 @@ jobs:
           submodules: recursive
       
       - name: Build submodules
-        run: make -C contrib -j $(nproc)
+        run: |
+          eval $(opam env)
+          make -C contrib -j $(nproc)
       
       - name: Build project
         run: |
+          eval $(opam env)
+          . contrib/env.sh
+          ./autogen.sh
+          ./configure
+          make -j $(nproc)
+      
+      - name: Run tests
+        run: make -C tests -k
+  
+  build-and-test-latest:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    container:
+      image: ubuntu:latest
+    
+    steps:
+      - name: Install dependencies
+        run: |
+          dpkg --add-architecture i386
+          apt update
+          DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt install -y \
+            build-essential libbsd-dev libelf-dev libdw-dev binutils-dev binutils-gold zlib1g-dev \
+            autoconf automake libtool pkg-config autoconf-archive \
+            gcc g++ lib32gcc-s1 \
+            opam \
+            default-jdk-headless python3 \
+            make git gawk gdb wget libc6-dbg \
+            libunwind-dev libunwind-dev:i386 linux-libc-dev-i386-cross libc6-dev-i386 \
+            libboost-iostreams-dev libboost-regex-dev \
+            libboost-serialization-dev libboost-filesystem-dev libffi-dev \
+            gettext-base \
+            ca-certificates clang \
+            pkg-config libglib2.0-dev
+      
+      - name: Setup OCaml 4.11 with opam
+        run: |
+          opam init --disable-sandboxing -y -a --compiler=4.11.2
+          eval $(opam env)
+          opam install -y ocamlfind ocamlbuild num
+      
+      - name: Report compiler versions
+        run: |
+          gcc --version
+          g++ --version
+          eval $(opam env)
+          ocaml --version
+      
+      - name: Checkout code with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Build submodules
+        run: |
+          eval $(opam env)
+          make -C contrib -j $(nproc)
+      
+      - name: Build project
+        run: |
+          eval $(opam env)
           . contrib/env.sh
           ./autogen.sh
           ./configure

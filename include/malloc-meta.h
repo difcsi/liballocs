@@ -39,7 +39,7 @@
 #define CHUNK_SIZE_WITH_TRAILER(sz, trailer_t, trailer_align_t) \
     PAD_TO_ALIGN(sz + sizeof (trailer_t), ALIGNOF(trailer_align_t))
 
-/* Inserts describing objects have user addresses. They may have the flag set or unset. */
+/* Inserts describing objects have user addresses */
 #define INSERT_DESCRIBES_OBJECT(ins) \
 	(ins->with_type.alloc_site_id || (char*)((uintptr_t)((unsigned long long)(ins->initial.alloc_site))) >= MINIMUM_USER_ADDRESS)
 #define INSERT_IS_NULL(p_ins) (!IS_WITH_TYPE(p_ins) && p_ins->initial.alloc_site == 0)
@@ -52,7 +52,7 @@
 
 struct insert {
 	union {
-		struct {
+		struct insert_initial {
 			unsigned unused:16; /* Always Zero, branch union on this */
 			unsigned long alloc_site:48;
 		} initial;

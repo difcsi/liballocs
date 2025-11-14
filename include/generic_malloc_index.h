@@ -19,7 +19,7 @@
 /* A thread-local variable to override the "caller" arguments. 
  * Platforms without TLS have to do without this feature. */
 #ifndef NO_TLS
-extern __thread void *__current_allocsite; // OR Uniqtype
+extern __thread void *__current_allocsite;
 extern __thread void *__current_allocfn;
 extern __thread size_t __current_allocsz;
 extern __thread int __currently_freeing;
@@ -579,10 +579,8 @@ struct insert *lookup_object_info_via_bitmap(struct arena_bitmap_info *info,
 	unsigned start_idx;
 	unsigned long found_bitidx;
 
-	if (!info){
-		assert(!found_ins || INSERT_DESCRIBES_OBJECT(found_ins));
-		return found_ins;
-	}
+	if (!info) return NULL;
+
 	start_idx = ((uintptr_t) mem - (uintptr_t) info->bitmap_base_addr) / MALLOC_ALIGN;
 	/* OPTIMISATION: exploit the maximum object size,
 	 * to set a "fake" bitmap base address that serves as the maximum

@@ -1,0 +1,50 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "GDB: Run test case with LD_PRELOAD",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "/usr/bin/env",
+      "args": [
+        "LD_PRELOAD=${workspaceFolder}/lib/liballocs_preload.so",
+        "LIBALLOCS_PAGEINDEX_NO_LAZY_MAPPING=1",
+        "./${input:caseName}",
+        "./${input:caseName}"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/tests/${input:caseName}",
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerArgs": "--symbols=./${input:caseName}",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
+        /*
+        {
+          "description": "Ignore SIGBUS",
+          "text": "handle SIGBUS nostop noprint pass",
+          "ignoreFailures": true
+        },
+        {
+          "description": "Ignore SIGILL",
+          "text": "handle SIGILL nostop noprint pass",
+          "ignoreFailures": true
+        } 
+          */
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "caseName",
+      "type": "promptString",
+      "description": "Test case directory/name (e.g., hello, allocsld-as-cmd)",
+      "default": "addrtaken-allocator"
+    }
+  ]
+}
