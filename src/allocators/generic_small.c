@@ -18,21 +18,34 @@
 struct entry {
 	union {
 		struct {
-			union {
-				unsigned long alloc_site:48;
-				struct {
-					unsigned alloc_site_id:16;
-					unsigned long uniqtype_id:28;
-					unsigned lifetime_policies:4;
-				} typed;	 
-			}; 
-		    unsigned mod:16; /* Object start modulus */
-		} regular;
-		struct {
-			unsigned size_in_bucket:8; // 0 means full bucket
-			unsigned always_zero:8;
-			unsigned long size:32;
-			unsigned always_zero2:16;
+			unsigned long discr:48; /* zero? null; small? continuation; non-small lower-half? regular_initial; non-small upper-half? regular with type */
+			unsigned modulus:8; /* offset into the bucket of obj start (zero for continuations) */
+			unsigned thisbucket_size:8;
+		} common;
+		struct{
+			unsigned long alloc_site:47; /* never zero, never small */
+			unsigned always_zero:1;
+			unsigned modulus:8;         /* obj start displacement from bucket start; may be zero */
+			unsigned thisbucket_size:8;
+		} regular_initial;
+		struct{
+			/* XXX: beware: we assume bitfields are allocated from least
+			 * significant to most significant. This is required by the
+			 * System V x86_64 ABI but others may vary. */
+			unsigned alloc_site_id:16;
+			unsigned long uniqtype_id:27;
+			unsigned lifetime_policies:4; /* may be zero */
+			unsigned always_one:1;
+			/* The above fields constitute a 48-bit unsigned integer whose value is always
+			 * in the top half of the range, because of the always_one MSB. */
+			unsigned modulus:8; /* may be zero */
+			unsigned thisbucket_size:8;
+		} regular_with_type;
+		struct{
+			unsigned long size:22; /* largest object is 4MB */ /* FIXME: define and use LOG_MINIMUM_USER_ADDRESS */
+			unsigned long always_zero:26; /* ensure our 48-bit value is < MINIMUM_USER_ADDRESS */
+			unsigned unused:8; /* continuations always *start* at offset zero */
+			unsigned thisbucket_size:8;
 		} continuation;
 	};
 } __attribute((packed));
@@ -155,13 +168,12 @@ memrect_bucket_range_base(void *bucket, void *rect_base, void *table_coverage_st
 
 
 
-#define IS_CONTINUATION_ENTRY(entry) \
-	((entry)->continuation.always_zero == 0 && (entry)->continuation.always_zero2 == 0)
+#define ENTRY_IS_CONTINUATION(entry) \
+	((entry)->common.discr != 0 && (entry)->common.discr < MINIMUM_USER_ADDRESS)
 
-#define ENTRY_IS_NULL(p_ent) ((!IS_CONTINUATION_ENTRY(p_ent)) && !((p_ent->regular.alloc_site)))
-
-#define ENTRY_GET_STORED_OFFSET(ent) ((ent)->regular.mod & 0xff)
-#define ENTRY_GET_THISBUCKET_SIZE(ent) (((ent)->regular.mod >> 8) == 0 ? 256 : ((ent)->regular.mod >> 8))
+#define ENTRY_IS_NULL(entry) ((entry)->common.discr == 0)
+#define ENTRY_GET_STORED_OFFSET(entry) ((entry)->common.modulus)
+#define ENTRY_GET_THISBUCKET_SIZE(entry) ((entry)->common.thisbucket_size)
 
 static
 struct entry *lookup_small_alloc(const void *ptr, 
@@ -299,9 +311,7 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 	}
 	// we should never need to go beyond the last layer
 	assert(layer_num < NLAYERS(p_chunk_rec));
-	
-	p_ent->regular.alloc_site = (unsigned long) __current_allocsite;
-	
+		
 	/* We also need to represent the object's size somehow. We choose to use 
 	 * continuation entries since the entry doesn't have enough bits.
 	 * The alloc site entries the bucket number in which the object starts. This limits us to
@@ -315,7 +325,11 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 	assert(thisbucket_size <= (1u << p_chunk_rec->log_pitch));
 	
 
-	p_ent->regular.mod = (thisbucket_size << 8) | modulus; // ZM: this is normal generic_small allocator entry
+	*p_ent = (struct entry) { .regular_initial = {
+		.alloc_site = (unsigned long) __current_allocsite,
+		.modulus = modulus,
+		.thisbucket_size = thisbucket_size
+	} };
 	
 	/* We should be sane already, even though our continuation is not recorded. */
 	check_bucket_sanity(p_bucket, p_chunk_rec, container);
@@ -343,13 +357,11 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 		assert(size_bytes < (uintptr_t) MINIMUM_USER_ADDRESS);
 		*p_continuation_ent = (struct entry) {
 			.continuation = {
-				size_in_bucket: (unsigned short) (size_in_continuation_bucket << 8),
-				always_zero: 0,
 				size: size_bytes,
-				always_zero2:0
+				thisbucket_size: size_in_continuation_bucket
 			}
 		};
-		assert(IS_CONTINUATION_ENTRY(p_continuation_ent));
+		assert(ENTRY_IS_CONTINUATION(p_continuation_ent));
 		check_bucket_sanity(p_continuation_bucket, p_chunk_rec, container);
 	}
 	
@@ -407,7 +419,7 @@ static void unindex_all_overlapping(void *unindex_start, void *unindex_end,
 			
 			/* We don't care about continuation entrys; we'll find the 
 			 * start record before any relevant continuation record. */
-			if (IS_CONTINUATION_ENTRY(i_layer))
+			if (ENTRY_IS_CONTINUATION(i_layer))
 			{
 				// FIXME: assert that it doesn't overlap
 				continue;
@@ -515,9 +527,9 @@ get_start_from_continuation(struct entry *p_ent, struct entry *p_bucket,
 			!ENTRY_IS_NULL(i_layer);
 			i_layer += ENTRIES_PER_LAYER(p_chunk_rec))
 	{
-		if (IS_CONTINUATION_ENTRY(i_layer)) continue;
+		if (ENTRY_IS_CONTINUATION(i_layer)) continue;
 		// the modulus tells us where this object starts in the bucket range
-		unsigned short modulus = p_object_start_bucket->regular.mod & 0xff;
+		unsigned short modulus = p_object_start_bucket->common.modulus;
 		if (!biggest_modulus_pos || 
 				ENTRY_GET_STORED_OFFSET(i_layer) > ENTRY_GET_STORED_OFFSET(biggest_modulus_pos))
 		{
@@ -551,15 +563,15 @@ check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struc
 		// we should never need to go beyond the last layer
 		assert(layer_num < NLAYERS(p_chunk_rec));
 
-		if (IS_CONTINUATION_ENTRY(i_layer))
+		if (ENTRY_IS_CONTINUATION(i_layer))
 		{
-			assert(i_layer->continuation.size_in_bucket != 0);
+			assert(i_layer->continuation.thisbucket_size != 0);
 			/* Check that the *previous* bucket contains the object start */
 			assert(get_start_from_continuation(i_layer, p_bucket, p_chunk_rec, container,
 					NULL, NULL, NULL));
 		} else {
-			unsigned short modulus = i_layer->regular.mod & 0xff;
-			unsigned short thisbucket_size = i_layer->regular.mod >> 8;
+			unsigned short modulus = i_layer->common.modulus;
+			unsigned short thisbucket_size = i_layer->common.thisbucket_size;
 
 			assert(modulus < (1u << p_chunk_rec->log_pitch));
 
@@ -571,12 +583,12 @@ check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struc
 
 				const unsigned our_end = modulus + thisbucket_size;
 
-				if(IS_CONTINUATION_ENTRY(i_earlier_layer))
+				if(ENTRY_IS_CONTINUATION(i_earlier_layer))
 				{
-					assert(i_earlier_layer->continuation.size_in_bucket != 0);
+					assert(i_earlier_layer->continuation.thisbucket_size != 0);
 				} else {
-					const unsigned short thisbucket_earlier_size = i_earlier_layer->regular.mod >> 8;
-					const unsigned short earlier_modulus = i_earlier_layer->regular.mod & 0xff;
+					const unsigned short thisbucket_earlier_size = i_earlier_layer->common.thisbucket_size;
+					const unsigned short earlier_modulus = i_earlier_layer->common.modulus;
 					const unsigned earlier_end = earlier_modulus + thisbucket_earlier_size;
 
 					// conventional overlap
@@ -655,7 +667,7 @@ struct entry *lookup_small_alloc(const void *ptr,
 			 * it's an object start entry (ditto).
 			 */
 
-			if (IS_CONTINUATION_ENTRY(p_ent))
+			if (ENTRY_IS_CONTINUATION(p_ent))
 			{
 				/* Does this continuation overlap our search address? */
 			
@@ -679,8 +691,8 @@ struct entry *lookup_small_alloc(const void *ptr,
 			else 
 			{
 				/* It's an object start entry. Does it overlap? */
-				char modulus = p_ent->regular.mod & 0xff;
-				unsigned short object_size_in_this_bucket = p_ent->regular.mod >> 8;
+				unsigned modulus = p_ent->common.modulus;
+				unsigned short object_size_in_this_bucket = p_ent->common.thisbucket_size;
 				char *object_start_addr = thisbucket_base_addr + modulus;
 				void *object_end_addr = object_start_addr + object_size_in_this_bucket;
 
@@ -756,7 +768,7 @@ static void unindex_small_alloc_internal_with_ent(void *ptr, struct chunk_rec *p
 				!ENTRY_IS_NULL(i_layer);
 				i_layer += ENTRIES_PER_LAYER(p_chunk_rec))
 		{
-			if (IS_CONTINUATION_ENTRY(i_layer))
+			if (ENTRY_IS_CONTINUATION(i_layer))
 			{
 				remove_one_entry(i_layer, p_bucket + 1, p_chunk_rec);
 				check_bucket_sanity(p_bucket + 1, p_chunk_rec, container);
