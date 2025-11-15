@@ -57,8 +57,8 @@ struct insert {
 			unsigned long alloc_site:48;
 		} initial;
 		struct insert_with_type {
-			unsigned alloc_site_id:16; /* Never Zero */
-			unsigned long uniqtype_shifted:44;  /* uniqtype ptrs "should be" 16-byte aligned => this field is ((unsigned long) u)>>4 */
+			unsigned alloc_site_id:16; /* Never Zero; -1 means "no/unknown alloc site" */
+			unsigned long uniqtype_shifted:44;  /* uniqtype ptrs are 8-byte aligned => and have top bit 0 this field is ((unsigned long) u)>>4 */
 #if LIFETIME_POLICIES > 4
 		#error "Variable size lifetime policies not fully supported yet"
 		unsigned lifetime_policies:LIFETIME_POLICIES; /* TODO: Alignment needed instead of packed in this case */
@@ -68,6 +68,9 @@ struct insert {
 		} with_type;
 	};
 } __attribute((packed));
+
+#define UNIQTYPE_SHIFT_FOR_INSERT(u)       (((unsigned long) (u)) >> 3)
+#define UNIQTYPE_UNSHIFT_FROM_INSERT(bits) ((struct uniqtype *)(((unsigned long) (bits)) << 3))
 
 static inline /*size_t*/ unsigned long caller_usable_size_for_chunk_and_usable_size(void *userptr,
 	/*size_t*/ unsigned long alloc_usable_size)

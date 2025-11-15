@@ -711,7 +711,7 @@ liballocs_err_t __generic_malloc_set_type(struct allocator *a,
 	struct insert *ins = lookup_object_info(arena_for_userptr(a, obj), obj,
 		NULL, NULL, NULL, sizefn);
 	if (!ins) return &__liballocs_err_unindexed_heap_object;
-	ins->with_type.uniqtype_shifted = (uintptr_t) ( (unsigned long) new_type >> 4);
+	ins->with_type.uniqtype_shifted = UNIQTYPE_SHIFT_FOR_INSERT(new_type);
 	ins->with_type.alloc_site_id = 1; // TODO
 	return NULL;
 }
@@ -747,12 +747,13 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 			//else 
 			*out_site = NULL;
 		}
-		/* Clear the low-order bit, which is available as an extra flag 
-		* bit. libcrunch uses this to track whether an object is "loose"
-		* or not. Loose objects have approximate type info that might be 
-		* "refined" later, typically e.g. from __PTR_void to __PTR_T.
-		* FIXME: this should just be determined by abstractness of the type. */
-		alloc_uniqtype = (struct uniqtype *)((uintptr_t)(p_ins->with_type.uniqtype_shifted << 4) & ~0x1ul);
+		
+		/* NOTE: we used to clear the low-order bit, which is available as an extra flag
+		 * bit. libcrunch wants to uses this to track whether an object is "loose"
+		 * or not. We have broken this with the switch to uniqtype_shifted since we really
+		 * want all four spare bits. Instead, looseness should be captured in existentially
+		 * erased uniqtypes like __uniqtype____EXISTS1___PTR__1 and so on. */
+		alloc_uniqtype = UNIQTYPE_UNSHIFT_FROM_INSERT(p_ins->with_type.uniqtype_shifted);
 
 	} else {
 		/* Look up the allocsite's uniqtype, and install it in the heap info 
@@ -782,12 +783,19 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		 * a binary search on the table proper. But that's okay. We get
 		 * everything we need. */
 		allocsite_id_t allocsite_id = __liballocs_allocsite_id((const void *) p_ins->initial.alloc_site);
+		p_ins->with_type.uniqtype_shifted = 0; /* temporary, to help races be benign */
+		/* Now we are changing which member of the union is active, to 'with_type', so
+		 * we have to have something non-zero in the alloc_site_id field. */
+
 		if (allocsite_id != (allocsite_id_t) -1)
 		{
 			// what to do with the id?? We have no spare bits...
 			// we could scrounge a few but certainly not 16 of them.
 			// When we're using a bitmap, we will have the space.
-		}
+			p_ins->with_type.alloc_site_id = allocsite_id; // HACK: Ideally, we would store the id here, but it isn't needed anywhere yet, so this is fine
+		} // else ins->with_type.alloc_site_id = -1; // <-- this is probably OK?
+		else assert(0 && "could not get/generate allocsite ID?");
+		p_ins->with_type.uniqtype_shifted = UNIQTYPE_SHIFT_FOR_INSERT(alloc_uniqtype);
 		
 #endif
 	}
