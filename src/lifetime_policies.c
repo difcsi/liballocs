@@ -5,11 +5,23 @@
 #error "This file can only be compiled if LIFETIME_POLICIES is set"
 #endif
 
+enum lifetime_policy_type
+{
+	LIFETIME_POLICY_MANUAL,
+	LIFETIME_POLICY_GC
+};
+
 struct lifetime_policy
 {
+	enum lifetime_policy_type type;
 	// This could be extended in the future to allow other types of policies
-	__gc_callback_t addref;
-	__gc_callback_t delref;
+	union {
+		struct {
+			__gc_callback_t addref;
+			__gc_callback_t delref;
+		} gc;
+		struct {} manual; // Placeholder
+	} policy;
 };
 
 static unsigned __last_free_lifetime_policy_id = 1;
@@ -22,21 +34,26 @@ int __liballocs_register_gc_policy(__gc_callback_t addref, __gc_callback_t delre
 
 	__lifetime_policies[id] = (struct lifetime_policy)
 	{
-		.addref = addref,
-		.delref = delref
+		.type = LIFETIME_POLICY_GC,
+		.policy = {
+			.gc = {
+				.addref = addref,
+				.delref = delref
+			}
+		}
 	};
 
 	return id;
 }
 
-static inline lifetime_insert_t *get_lifetime_insert_info(const void *obj,
+static inline INSERT_TYPE *get_lifetime_insert_info(const void *obj,
 		const void **out_allocstart, void (**out_free_fn)(struct allocated_chunk *))
 {
 	if ((char *) obj < MINIMUM_USER_ADDRESS || (char *) obj > MAXIMUM_USER_ADDRESS)
 		return NULL;
 
 	struct big_allocation *maybe_the_allocation;
-	struct allocator *a = __liballocs_leaf_allocator_for(obj, NULL, &maybe_the_allocation);
+	struct allocator *a = __liballocs_leaf_allocator_for(obj, &maybe_the_allocation);
 	if (!a || !ALLOCATOR_HANDLE_LIFETIME_INSERT(a)) return NULL;
 
 	void *allocstart;
@@ -46,15 +63,16 @@ static inline lifetime_insert_t *get_lifetime_insert_info(const void *obj,
 	if (out_allocstart) *out_allocstart = allocstart;
 	if (out_free_fn) *out_free_fn = a->free;
 
-	return lifetime_insert_for_chunk(allocstart);
+
+	return lifetime_insert_for_chunk(allocstart, a->get_size);
 }
 
 void __liballocs_attach_lifetime_policy(int policy_id, const void *obj)
 {
 	assert(policy_id >= 0);
 
-	lifetime_insert_t *lti = get_lifetime_insert_info(obj, NULL, NULL);
-	if (lti) *lti |= LIFETIME_POLICY_FLAG(policy_id);
+	INSERT_TYPE *lti = get_lifetime_insert_info(obj, NULL, NULL);
+	if (lti) lti->with_type.lifetime_policies |= LIFETIME_POLICY_FLAG(policy_id);
 }
 
 void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
@@ -63,11 +81,11 @@ void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
 
 	const void *allocstart;
 	void (*free_fn)(struct allocated_chunk *);
-	lifetime_insert_t *lti = get_lifetime_insert_info(obj, &allocstart, &free_fn);
+	INSERT_TYPE *lti = get_lifetime_insert_info(obj, &allocstart, &free_fn);
 	if (lti)
 	{
-		*lti &= ~LIFETIME_POLICY_FLAG(policy_id);
-		if (!*lti) free_fn((struct allocated_chunk *) allocstart);
+		lti->with_type.lifetime_policies &= ~LIFETIME_POLICY_FLAG(policy_id);
+		if (!lti->with_type.lifetime_policies) free_fn((struct allocated_chunk *) allocstart);
 	}
 }
 
@@ -77,14 +95,14 @@ void __notify_ptr_write(const void **dest, const void *val)
 	// Override version in liballocs.c
 	const void *old_val = *dest;
 	const void *old_allocstart;
-	lifetime_insert_t *old_lti = get_lifetime_insert_info(old_val, &old_allocstart, NULL);
+	INSERT_TYPE *old_lti = get_lifetime_insert_info(old_val, &old_allocstart, NULL);
 	if (old_lti && HAS_LIFETIME_POLICIES_ATTACHED(*old_lti))
 	{
 		// Must be saved on stack to prevent use after free of old_lti
-		lifetime_insert_t policies_attached = *old_lti;
+		INSERT_TYPE policies_attached = *old_lti;
 		for (unsigned i = 1; i < LIFETIME_POLICIES; ++i)
 		{
-			if (policies_attached & LIFETIME_POLICY_FLAG(i))
+			if (policies_attached.with_type.lifetime_policies & LIFETIME_POLICY_FLAG(i))
 			{
 				// old_allocstart destination cannot have been freed if we are here
 				__lifetime_policies[i].delref(old_allocstart, dest);
@@ -93,12 +111,12 @@ void __notify_ptr_write(const void **dest, const void *val)
 	}
 
 	const void *new_allocstart;
-	lifetime_insert_t *new_lti = get_lifetime_insert_info(val, &new_allocstart, NULL);
+	INSERT_TYPE *new_lti = get_lifetime_insert_info(val, &new_allocstart, NULL);
 	if (new_lti && HAS_LIFETIME_POLICIES_ATTACHED(*new_lti))
 	{
 		for (unsigned i = 1; i < LIFETIME_POLICIES; ++i)
 		{
-			if (*new_lti & LIFETIME_POLICY_FLAG(i))
+			if (new_lti->with_type.lifetime_policies & LIFETIME_POLICY_FLAG(i))
 			{
 				__lifetime_policies[i].addref(new_allocstart, dest);
 			}
@@ -180,7 +198,7 @@ static unsigned long notify_copy_for_type(void *dest, const void *src, unsigned 
 static struct uniqtype *try_get_alloc_type(void *obj)
 {
 	struct big_allocation *maybe_the_allocation;
-	struct allocator *a = __liballocs_leaf_allocator_for(obj, NULL, &maybe_the_allocation);
+	struct allocator *a = __liballocs_leaf_allocator_for(obj, &maybe_the_allocation);
 	if (!a) return NULL;
 
 	// HACK: We want to avoid generating unrecognized heap alloc site errors
