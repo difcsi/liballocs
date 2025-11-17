@@ -16,8 +16,8 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: build-essential libbsd-dev libelf-dev libdw-dev binutils-dev binutils-gold zlib1g-dev autoconf automake libtool pkg-config autoconf-archive g++-10 gcc-10 lib32gcc-10-dev opam default-jdk-headless python3 make git gawk gdb wget libc6-dbg libunwind-dev libunwind-dev:i386 linux-libc-dev-i386-cross libc6-dev-i386 libboost-iostreams-dev libboost-regex-dev libboost-serialization-dev libboost-filesystem-dev libffi-dev gettext-base ca-certificates clang libglib2.0-dev
-          version: 1.0
+          packages: build-essential libbsd-dev libelf-dev libdw-dev binutils-dev binutils-gold zlib1g-dev autoconf automake libtool pkg-config autoconf-archive g++-10 gcc-10 lib32gcc-10-dev opam default-jdk-headless python3 make git gawk gdb wget libc6-dbg libunwind-dev libunwind-dev:i386 libunwind8 libunwind8:i386 linux-libc-dev-i386-cross libc6-dev-i386 libboost-iostreams-dev libboost-regex-dev libboost-serialization-dev libboost-filesystem-dev libffi-dev gettext-base ca-certificates clang libglib2.0-dev
+          version: 1.1
       
       - name: Enable i386 architecture
         run: |
@@ -83,7 +83,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
             libbsd-dev libelf-dev libdw-dev binutils-dev binutils-gold zlib1g-dev \
             autoconf automake libtool pkg-config autoconf-archive \
-            lib32gcc-s1 \
+            gcc-multilib g++-multilib lib32gcc-s1 \
             opam \
             default-jdk-headless python3 \
             make git gawk gdb wget libc6-dbg \
