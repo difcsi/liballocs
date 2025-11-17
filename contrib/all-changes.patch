@@ -1,0 +1,1773 @@
+From 36fb1685062eaa469f16fc983527ddc5622d752d Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Mon, 28 Jul 2025 15:21:23 +0100
+Subject: [PATCH 01/10] chore: fix compiler errors from recent gccs
+
+---
+ allocsld/allocinstr.c | 6 +++---
+ allocsld/chain.c      | 1 +
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/allocsld/allocinstr.c b/allocsld/allocinstr.c
+index 0041047..39a03c3 100644
+--- a/allocsld/allocinstr.c
++++ b/allocsld/allocinstr.c
+@@ -220,9 +220,9 @@ _Bool walk_all_ld_so_symbols(struct link_map *ld_so_link_map, void *arg)
+ 	fake_meta.m.filename = fake_meta.m.l->l_name;
+ 	int fd_meta = find_and_open_meta_libfile(&fake_meta);
+ 	if (fd_meta == -1) goto out_notloaded;
+-	struct loadee_info ld_so_meta = load_from_fd(fd_meta, "metadata object for " SYSTEM_LDSO_PATH,
+-		/* loadee_base_addr_hint */ (uintptr_t) 0, NULL, NULL);
+-	if (!ld_so_meta.dynamic_vaddr) goto out; // harsh but go with it for now
++	struct loadee_info ld_so_meta = load_from_fd(fd_meta, meta_libfile_name(SYSTEM_LDSO_PATH),
++		/* loadee_base_addr_hint */ 0, NULL, 0);
++	if (!ld_so_meta.dynamic_vaddr) goto out_notloaded; // harsh but go with it for now
+ 	ElfW(Dyn) *meta_dyn = (ElfW(Dyn) *) (ld_so_meta.dynamic_vaddr + ld_so_meta.base_addr);
+ 	// also look for  'extrasyms' and walk those
+ 	ElfW(Sym) *extrasyms_sym = symbol_lookup_in_dyn(meta_dyn,
+diff --git a/allocsld/chain.c b/allocsld/chain.c
+index a4a705a..5c82bfa 100644
+--- a/allocsld/chain.c
++++ b/allocsld/chain.c
+@@ -9,6 +9,7 @@
+ #include "donald.h"
+ #include <link.h>
+ #include "relf.h"
++#include "cover-tracks.h"
+ 
+ #define die(s, ...) do { fprintf(stderr, DONALD_NAME ": " s , ##__VA_ARGS__); exit(-1); } while(0)
+ // #define die(s, ...) do { fwrite(DONALD_NAME ": " s , sizeof DONALD_NAME ": " s, 1, stderr); exit(-1); } while(0)
+-- 
+2.51.0
+
+
+From e3f59bb51df5be7e35bded80beb041376f39f3b1 Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Tue, 29 Jul 2025 12:56:08 +0100
+Subject: [PATCH 02/10] wip: compilable, not tested
+
+---
+ allocsld/allocinstr.c          |  2 +-
+ configure.ac                   | 13 +------
+ include/generic_malloc_index.h | 48 ++++++++++++------------
+ include/malloc-meta.h          | 68 +++++++++++++---------------------
+ src/allocators/generic_small.c | 46 +++++++++++------------
+ src/allocators/ld-so-malloc.c  |  4 +-
+ src/lifetime_policies.c        | 51 ++++++++++++++++---------
+ tools/stubgen.h                |  7 ++--
+ 8 files changed, 113 insertions(+), 126 deletions(-)
+
+diff --git a/allocsld/allocinstr.c b/allocsld/allocinstr.c
+index 39a03c3..5bbefc3 100644
+--- a/allocsld/allocinstr.c
++++ b/allocsld/allocinstr.c
+@@ -435,7 +435,7 @@ static void linear_malloc_index_insert(
+ 	size_t real_caller_usable_size = real_requested_size - sizeof (INSERT_TYPE);
+ 	struct insert *insert = insert_for_chunk_and_caller_usable_size(allocptr,
+ 		real_caller_usable_size);
+-	insert->alloc_site = (uintptr_t) caller;
++	insert->initial.alloc_site = (uintptr_t) caller;
+ 	linear_malloc->recs[linear_malloc->nrecs_used++] = (struct linear_malloc_rec) {
+ 		.addr = allocptr,
+ 		.caller_requested_size = caller_requested_size,
+diff --git a/configure.ac b/configure.ac
+index be22e1f..093165c 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -116,16 +116,8 @@ AC_ARG_ENABLE([lifetime-policies],
+                              [Enable the lifetime extension interface, with at most NB distinct policies, or 8 if NB is not provided [disabled by default]]),
+               [case ${enableval} in
+                   no) lifetime_policies=0 ;;
+-                  yes) lifetime_policies=8 ;;
++                  yes) lifetime_policies=4 ;;
+                   *) lifetime_policies=${enableval} ;;
+-               esac
+-               case ${lifetime_policies} in
+-                  0) ;;
+-                  8) lifetime_insert_type="uint8_t" ;;
+-                  16) lifetime_insert_type="uint16_t" ;;
+-                  32) lifetime_insert_type="uint32_t" ;;
+-                  64) lifetime_insert_type="uint64_t" ;;
+-                  *) AC_MSG_ERROR([bad value ${enableval} for --enable-lifetime-policies])
+                esac],
+               [lifetime_policies=0])
+ AC_ARG_ENABLE([precise-requested-allocsize],
+@@ -137,8 +129,7 @@ AS_IF([test "x$enable_fake_libunwind" = "xyes"],
+ AS_IF([test $lifetime_policies != 0],
+       [AC_DEFINE_UNQUOTED([LIFETIME_POLICIES], [$lifetime_policies],
+                           [When lifetime extenstion is available this macro expands to the number of available lifetime policies, else it is undefined])
+-       AC_DEFINE_UNQUOTED([LIFETIME_INSERT_TYPE], [$lifetime_insert_type],
+-                          [Expands to the type of lifetime inserts])])
++      ])
+ AS_IF([test "x$precise_requested_allocsize" = "xyes"],
+       [AC_DEFINE([PRECISE_REQUESTED_ALLOCSIZE],1,[If defined, liballocs needs to return the precise requested size on size queries])])
+ 
+diff --git a/include/generic_malloc_index.h b/include/generic_malloc_index.h
+index eedb438..c4b363d 100644
+--- a/include/generic_malloc_index.h
++++ b/include/generic_malloc_index.h
+@@ -364,9 +364,8 @@ static inline struct insert *__generic_malloc_index_insert(
+ 	p_insert = insert_for_chunk_and_caller_usable_size(allocptr,
+ 		caller_usable_size);
+ 	/* Populate our extra in-chunk fields */
+-	p_insert->alloc_site_flag = 0U;
+-	p_insert->alloc_site = (uintptr_t) caller;
+-
++	p_insert->initial.unused = 0U;
++	p_insert->initial.alloc_site = (uintptr_t) caller;
+ #if 0 // def PRECISE_REQUESTED_ALLOCSIZE
+ 	/* FIXME: this isn't really the insert size. It's the insert plus padding.
+ 	 * I'm not sure why/whether we need this. */
+@@ -580,7 +579,10 @@ struct insert *lookup_object_info_via_bitmap(struct arena_bitmap_info *info,
+ 	unsigned start_idx;
+ 	unsigned long found_bitidx;
+ 
+-	if (!info) goto out;
++	if (!info){
++		assert(!found_ins || INSERT_DESCRIBES_OBJECT(found_ins));
++		return found_ins;
++	}
+ 	start_idx = ((uintptr_t) mem - (uintptr_t) info->bitmap_base_addr) / MALLOC_ALIGN;
+ 	/* OPTIMISATION: exploit the maximum object size,
+ 	 * to set a "fake" bitmap base address that serves as the maximum
+@@ -616,7 +618,6 @@ struct insert *lookup_object_info_via_bitmap(struct arena_bitmap_info *info,
+ 		if (out_object_start) *out_object_start = object_start;
+ 		if (out_object_size) *out_object_size = usersize(object_start, sizefn);
+ 	}
+-out:
+ 	assert(!found_ins || INSERT_DESCRIBES_OBJECT(found_ins));
+ 	return found_ins;
+ }
+@@ -712,8 +713,8 @@ liballocs_err_t __generic_malloc_set_type(struct allocator *a,
+ 	struct insert *ins = lookup_object_info(arena_for_userptr(a, obj), obj,
+ 		NULL, NULL, NULL, sizefn);
+ 	if (!ins) return &__liballocs_err_unindexed_heap_object;
+-	ins->alloc_site = (uintptr_t) new_type;
+-	ins->alloc_site_flag = 1; // meaning it's a type, not a site
++	ins->with_type.uniqtype_shifted = (uintptr_t) ( (unsigned long) new_type >> 4);
++	ins->with_type.alloc_site_id = 1; // ZMTODO: ID
+ 	return NULL;
+ }
+ 
+@@ -729,15 +730,14 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		++__liballocs_aborted_unindexed_heap;
+ 		return &__liballocs_err_unindexed_heap_object;
+ 	}
+-	void *alloc_site_addr = (void *) ((uintptr_t) p_ins->alloc_site);
+ 
+ 	/* Now we have a uniqtype or an allocsite. For long-lived objects 
+ 	 * the uniqtype will have been installed in the heap header already.
+ 	 * This is the expected case.
+ 	 */
+ 	struct uniqtype *alloc_uniqtype;
+-	if (__builtin_expect(p_ins->alloc_site_flag, 1))
+-	{
++	if (__builtin_expect(IS_WITH_TYPE(p_ins), 1)){
++		
+ 		if (out_site)
+ 		{
+ 			//unsigned short id = (unsigned short) p_ins->un.bits;
+@@ -750,17 +750,16 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 			*out_site = NULL;
+ 		}
+ 		/* Clear the low-order bit, which is available as an extra flag 
+-		 * bit. libcrunch uses this to track whether an object is "loose"
+-		 * or not. Loose objects have approximate type info that might be 
+-		 * "refined" later, typically e.g. from __PTR_void to __PTR_T.
+-		 * FIXME: this should just be determined by abstractness of the type. */
+-		alloc_uniqtype = (struct uniqtype *)((uintptr_t)(p_ins->alloc_site) & ~0x1ul);
+-	}
+-	else
+-	{
++			* bit. libcrunch uses this to track whether an object is "loose"
++			* or not. Loose objects have approximate type info that might be 
++			* "refined" later, typically e.g. from __PTR_void to __PTR_T.
++			* FIXME: this should just be determined by abstractness of the type. */
++		alloc_uniqtype = (struct uniqtype *)((uintptr_t)(p_ins->with_type.uniqtype_shifted << 4) & ~0x1ul);
++
++	} else {
+ 		/* Look up the allocsite's uniqtype, and install it in the heap info 
+ 		 * (on NDEBUG builds only, because it reduces debuggability a bit). */
+-		uintptr_t alloc_site_addr = p_ins->alloc_site;
++		uintptr_t alloc_site_addr = p_ins->with_type.uniqtype_shifted << 4;
+ 		void *alloc_site = (void*) alloc_site_addr;
+ 		if (out_site) *out_site = alloc_site;
+ 		struct allocsite_entry *entry = __liballocs_find_allocsite_entry_at(alloc_site);
+@@ -771,7 +770,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		{
+ 			__liballocs_addrlist_add(&__liballocs_unrecognised_heap_alloc_sites, alloc_site);
+ 		}
+-#ifdef NDEBUG
++#if 1
+ 		// install it for future lookups
+ 		// FIXME: make this atomic using a union
+ 		// Is this in a loose state? NO. We always make it strict.
+@@ -779,8 +778,8 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		// it a dynamically-sized alloc with a uniqtype.
+ 		// This means we're the first query to rewrite the alloc site,
+ 		// and is the client's queue to go poking in the insert.
+-		p_ins->alloc_site_flag = 1;
+-		p_ins->alloc_site = (uintptr_t) alloc_uniqtype /* | 0x0ul */;
++		p_ins->initial.unused = 0;
++		p_ins->initial.alloc_site = (uintptr_t) alloc_uniqtype /* | 0x0ul */;
+ 		/* How do we get the id? Doing a binary search on the by-id spine is
+ 		 * okay because there will be very few of them. We don't want to do
+ 		 * a binary search on the table proper. But that's okay. We get
+@@ -795,7 +794,6 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		
+ #endif
+ 	}
+-
+ 	// if we didn't get an alloc uniqtype, we abort
+ 	if (!alloc_uniqtype) 
+ 	{
+@@ -815,8 +813,8 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		if (p_ins)
+ 		{
+ 	#ifdef NDEBUG
+-			p_ins->alloc_site_flag = 1;
+-			p_ins->alloc_site = 0;
++			p_ins->with_type.alloc_site_id = 1; // ZMTODO: ID
++			p_ins->with_type.uniqtype_shifted = 0;
+ 	#endif
+ 			assert(INSERT_DESCRIBES_OBJECT(p_ins));
+ 			assert(!INSERT_IS_NULL(p_ins));
+diff --git a/include/malloc-meta.h b/include/malloc-meta.h
+index dbb00ff..8d8148e 100644
+--- a/include/malloc-meta.h
++++ b/include/malloc-meta.h
+@@ -41,32 +41,36 @@
+ 
+ /* Inserts describing objects have user addresses. They may have the flag set or unset. */
+ #define INSERT_DESCRIBES_OBJECT(ins) \
+-	(!((ins)->alloc_site) || (char*)((uintptr_t)((unsigned long long)((ins)->alloc_site))) >= MINIMUM_USER_ADDRESS)
+-#define INSERT_IS_NULL(p_ins) (!(p_ins)->alloc_site && !(p_ins)->alloc_site_flag)
++	(ins->with_type.alloc_site_id || (char*)((uintptr_t)((unsigned long long)(ins->initial.alloc_site))) >= MINIMUM_USER_ADDRESS)
++#define INSERT_IS_NULL(p_ins) (!IS_WITH_TYPE(p_ins) && p_ins->initial.alloc_site == 0)
+ 
+ /* What's the most space that a malloc insert will use?
+  * We use this figure to guess when an alloc has been satisfied with mmap().
+  * Making it too big hurts performance but not correctness. */
+ #define MAXIMUM_MALLOC_HEADER_OVERHEAD 16
+ 
+-struct insert
+-{
+-	unsigned alloc_site_flag:1;
+-	unsigned long alloc_site:47;
+-#if 0
+-	union __attribute__((packed))
+-	{
+-		unsigned lowbits:3; /* FIXME: do these really coincide with low-order of allocsite? */
+-	};
+-#endif
+-	union __attribute__((packed))
+-	{
+-		unsigned bits:16; /* used to store alloc site in compact form */
+-	} un;
+-#ifdef USE_LIFETIME_POLICIES
+-	unsigned long unused;
++
++struct insert {
++	union {
++		struct {
++			unsigned unused:16; /* Always Zero, branch union on this */
++			unsigned long alloc_site:48;
++#if LIFETIME_POLICIES > 4
++	#error "Variable size lifetime policies not fully supported yet"
++				unsigned unused2:LIFETIME_POLICIES - 4;
+ #endif
+-} __attribute__((packed));
++		} initial;
++		struct {
++			unsigned alloc_site_id:16; /* Never Zero */
++			unsigned long uniqtype_shifted:44;  /* uniqtype ptrs "should be" 16-byte aligned => this field is ((unsigned long) u)>>4 */
++#if LIFETIME_POLICIES > 4
++		unsigned lifetime_policies:LIFETIME_POLICIES; /* TODO: Alignment needed instead of packed in this case */
++#else
++		unsigned lifetime_policies:4;
++#endif 
++		} with_type;
++	};
++} __attribute((packed));
+ 
+ static inline /*size_t*/ unsigned long caller_usable_size_for_chunk_and_usable_size(void *userptr,
+ 	/*size_t*/ unsigned long alloc_usable_size)
+@@ -79,7 +83,7 @@ typedef unsigned long /*size_t*/ sizefn_t(void*);
+ static inline struct insert *
+ insert_for_chunk_and_caller_usable_size(void *userptr, /*size_t*/ unsigned long caller_usable_size)
+ {
+-	/*uintptr_t*/ unsigned long long insertptr
++	/*uintptr_t*/ unsigned long long insertptr	
+ 	 = (unsigned long long)((char*) userptr + caller_usable_size);
+ 	return (struct insert *)insertptr;
+ }
+@@ -95,30 +99,8 @@ static inline struct insert *insert_for_chunk(void *userptr, sizefn_t *sizefn)
+ }
+ 
+ 
+-/* Chunks can also have lifetime policies attached, if we are built
+- * with support for this.
+- *
+- * Ideally we could pack all this into 64 bits:
+- * -uniqtype        (44 bits)
+- * -allocsite idx   (~14 bits? not sure how many bona-fide allocation sites large programs may have)
+- *      -- one trick might be to bin the allocation sites by uniqtype, so that
+- *         when the uniqtype is present, only a per-uniqtype idx is needed.
+- *         Currently allocsites are sorted by address, so we can bsearch them,
+- *         so we'd need a separate set of indexes grouping by type. Maybe the uniqtype
+- *         can even point to its allocsites?
+- * -one bit per lifetime policy (~6 bits?).
+- *
+- * When we get rid of the memtable in favour of the bitmap,
+- * we should be able to fit this in.
+- * For now, strip out the lifetime policies support.
+- */
+-typedef /*LIFETIME_INSERT_TYPE*/ unsigned char lifetime_insert_t;
+ #define LIFETIME_POLICY_FLAG(id) (0x1 << (id))
+-/* By convention lifetime policy 0 is the manual deallocation policy */
+-#define MANUAL_DEALLOCATION_POLICY 0
+-#define MANUAL_DEALLOCATION_FLAG LIFETIME_POLICY_FLAG(MANUAL_DEALLOCATION_POLICY)
+-/* Manual deallocation is not an "attached" policy */
+-#define HAS_LIFETIME_POLICIES_ATTACHED(lti) ((lti) & ~(MANUAL_DEALLOCATION_FLAG))
++#define IS_WITH_TYPE(ins) (ins->initial.unused != 0)
+ 
+ static inline lifetime_insert_t *lifetime_insert_for_chunk(void *userptr, sizefn_t *sizefn)
+ {
+diff --git a/src/allocators/generic_small.c b/src/allocators/generic_small.c
+index 07cbcba..e703b9a 100644
+--- a/src/allocators/generic_small.c
++++ b/src/allocators/generic_small.c
+@@ -122,14 +122,14 @@ memrect_bucket_range_base(void *bucket, void *rect_base, void *table_coverage_st
+ 	((p_chunk_rec)->metadata_recs + (((p_ins) - (p_chunk_rec)->metadata_recs) % \
+ 	memrect_entries_per_layer((p_chunk_rec)->power_of_two_size, (p_chunk_rec)->log_pitch)))
+ /* Terminators must have the alloc_site and the flag both unset. */
+-#define ENTRY_IS_NULL(p_ins) (!(p_ins)->alloc_site && !(p_ins)->alloc_site_flag)
++#define ENTRY_IS_NULL(p_ins) (!IS_WITH_TYPE(p_ins) && !p_ins->initial.alloc_site )
+ 
+ /* Continuation records have the flag set and a non-user-address (actually the object
+  * size) in the alloc_site. */
+ #define IS_CONTINUATION_ENTRY(ins) \
+-	(!(INSERT_DESCRIBES_OBJECT(ins)) && (ins)->alloc_site_flag)
+-#define ENTRY_GET_STORED_OFFSET(ins) ((ins)->un.bits & 0xff)
+-#define ENTRY_GET_THISBUCKET_SIZE(ins) (((ins)->un.bits >> 8) == 0 ? 256 : ((ins)->un.bits >> 8))
++	(!(INSERT_DESCRIBES_OBJECT(ins)) && IS_WITH_TYPE(ins))
++#define ENTRY_GET_STORED_OFFSET(ins) ((ins)->with_type.alloc_site_id & 0xff)
++#define ENTRY_GET_THISBUCKET_SIZE(ins) (((ins)->with_type.alloc_site_id >> 8) == 0 ? 256 : ((ins)->with_type.alloc_site_id >> 8))
+ 
+ static
+ struct insert *lookup_small_alloc(const void *ptr, 
+@@ -269,8 +269,7 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 	assert(layer_num < NLAYERS(p_chunk_rec));
+ 	
+ 	/* Store the insert. The object start modulus goes in `bits'. */
+-	p_ins->alloc_site = (uintptr_t) __current_allocsite;
+-	p_ins->alloc_site_flag = 0;
++	p_ins->initial.unused = 0u;
+ 	
+ 	/* We also need to represent the object's size somehow. We choose to use 
+ 	 * continuation entries since the insert doesn't have enough bits. Continuation entries
+@@ -286,7 +285,7 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 	assert(thisbucket_size != 0);
+ 	assert(thisbucket_size <= (1u << p_chunk_rec->log_pitch));
+ 	
+-	p_ins->un.bits = (thisbucket_size << 8) | modulus;
++	p_ins->with_type.alloc_site_id = (thisbucket_size << 8) | modulus;
+ 	
+ 	/* We should be sane already, even though our continuation is not recorded. */
+ 	check_bucket_sanity(p_bucket, p_chunk_rec, container);
+@@ -318,9 +317,10 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 		assert(size_bytes > 0);
+ 		assert(size_bytes < (uintptr_t) MINIMUM_USER_ADDRESS);
+ 		*p_continuation_ins = (struct insert) {
+-			.alloc_site = size_bytes, // NOTE what we're doing here! the object size goes into the alloc_site field
+-			.alloc_site_flag = 1,     // ditto
+-			.un = { bits: (unsigned short) (size_in_continuation_bucket << 8) }  // ditto: modulus is zero, BUT size is included
++			.with_type = { 
++				alloc_site_id: (unsigned short) (size_in_continuation_bucket << 8),
++				uniqtype_shifted: size_bytes // NOTE what we're doing here! the object size goes into the uniqtype field
++			}
+ 		};
+ 		assert(IS_CONTINUATION_ENTRY(p_continuation_ins));
+ 		check_bucket_sanity(p_continuation_bucket, p_chunk_rec, container);
+@@ -490,7 +490,7 @@ get_start_from_continuation(struct insert *p_ins, struct insert *p_bucket,
+ 	{
+ 		if (IS_CONTINUATION_ENTRY(i_layer)) continue;
+ 		// the modulus tells us where this object starts in the bucket range
+-		unsigned short modulus = p_object_start_bucket->un.bits & 0xff;
++		unsigned short modulus = p_object_start_bucket->with_type.alloc_site_id & 0xff;
+ 		if (!biggest_modulus_pos || 
+ 				ENTRY_GET_STORED_OFFSET(i_layer) > ENTRY_GET_STORED_OFFSET(biggest_modulus_pos))
+ 		{
+@@ -502,8 +502,8 @@ get_start_from_continuation(struct insert *p_ins, struct insert *p_bucket,
+ 	object_ins = biggest_modulus_pos;
+ 	char *object_start = (char*)(BUCKET_RANGE_BASE(p_object_start_bucket, p_chunk_rec, container->begin)) 
+ 			+ ENTRY_GET_STORED_OFFSET(biggest_modulus_pos);
+-	uintptr_t object_size = p_ins->alloc_site;
+-	
++	uintptr_t object_size = p_ins->with_type.alloc_site_id;
++
+ 	if (out_object_start) *out_object_start = object_start;
+ 	if (out_object_size) *out_object_size = object_size;
+ 	if (out_object_ins) *out_object_ins = object_ins;
+@@ -524,10 +524,10 @@ check_bucket_sanity(struct insert *p_bucket, struct chunk_rec *p_chunk_rec, stru
+ 	{
+ 		// we should never need to go beyond the last layer
+ 		assert(layer_num < NLAYERS(p_chunk_rec));
+-		
+-		unsigned short thisbucket_size = i_layer->un.bits >> 8;
+-		unsigned short modulus = i_layer->un.bits & 0xff;
+-		
++
++		unsigned short thisbucket_size = i_layer->with_type.alloc_site_id >> 8;
++		unsigned short modulus = i_layer->with_type.alloc_site_id & 0xff;
++
+ 		assert(modulus < (1u << p_chunk_rec->log_pitch));
+ 		
+ 		if (IS_CONTINUATION_ENTRY(i_layer))
+@@ -542,9 +542,9 @@ check_bucket_sanity(struct insert *p_bucket, struct chunk_rec *p_chunk_rec, stru
+ 			i_earlier_layer != i_layer;
+ 			i_earlier_layer += ENTRIES_PER_LAYER(p_chunk_rec))
+ 		{
+-			unsigned short thisbucket_earlier_size = i_earlier_layer->un.bits >> 8;
+-			unsigned short earlier_modulus = i_earlier_layer->un.bits & 0xff;
+-			
++			unsigned short thisbucket_earlier_size = i_earlier_layer->with_type.alloc_site_id >> 8;
++			unsigned short earlier_modulus = i_earlier_layer->with_type.alloc_site_id & 0xff;
++
+ 			// note that either entry might be a continuation entry
+ 			// ... in which case zero-size means "the whole bucket"
+ 			assert(!(IS_CONTINUATION_ENTRY(i_earlier_layer) && thisbucket_earlier_size == 0));
+@@ -623,8 +623,8 @@ struct insert *lookup_small_alloc(const void *ptr,
+ 			 *
+ 			 * it's an object start entry (ditto).
+ 			 */
+-			unsigned short object_size_in_this_bucket = p_ins->un.bits >> 8;
+-			unsigned short modulus = p_ins->un.bits & 0xff;
++			unsigned short object_size_in_this_bucket = p_ins->with_type.alloc_site_id >> 8;
++			unsigned short modulus = p_ins->with_type.alloc_site_id & 0xff;
+ 
+ 			if (IS_CONTINUATION_ENTRY(p_ins))
+ 			{
+@@ -651,7 +651,7 @@ struct insert *lookup_small_alloc(const void *ptr,
+ 			else 
+ 			{
+ 				/* It's an object start entry. Does it overlap? */
+-				char modulus = p_ins->un.bits & 0xff;
++				char modulus = p_ins->with_type.alloc_site_id & 0xff;
+ 				char *object_start_addr = thisbucket_base_addr + modulus;
+ 				void *object_end_addr = object_start_addr + object_size_in_this_bucket;
+ 
+diff --git a/src/allocators/ld-so-malloc.c b/src/allocators/ld-so-malloc.c
+index 3f32dd1..c50e2b1 100644
+--- a/src/allocators/ld-so-malloc.c
++++ b/src/allocators/ld-so-malloc.c
+@@ -102,8 +102,8 @@ static struct liballocs_err *linear_malloc_get_info(
+ 			found->addr, found->caller_requested_size + found->padding_to_caller_usable_size); // FIXME: wrong size here?
+ 		if (out_base) *out_base = found->addr;
+ 		if (out_size) *out_size = found->caller_requested_size;
+-		if (out_type && heap_info->alloc_site_flag) *out_type = (struct uniqtype *) (void*) (uintptr_t) heap_info->alloc_site;
+-		if (out_site && !heap_info->alloc_site_flag) *out_site = (void*) (uintptr_t) heap_info->alloc_site;
++		if (out_type && IS_WITH_TYPE(heap_info)) *out_type = (struct uniqtype *) (heap_info->with_type.uniqtype_shifted << 4); //ZMTODO: do we need to shift here?
++		if (out_site && !IS_WITH_TYPE(heap_info)) *out_site = (void*) (uintptr_t) heap_info->initial.alloc_site;
+ 		return NULL;
+ 	}
+ 	return &__liballocs_err_unindexed_heap_object;
+diff --git a/src/lifetime_policies.c b/src/lifetime_policies.c
+index 279ac99..c024956 100644
+--- a/src/lifetime_policies.c
++++ b/src/lifetime_policies.c
+@@ -5,11 +5,23 @@
+ #error "This file can only be compiled if LIFETIME_POLICIES is set"
+ #endif
+ 
++enum lifetime_policy_type
++{
++	LIFETIME_POLICY_MANUAL,
++	LIFETIME_POLICY_GC
++};
++
+ struct lifetime_policy
+ {
++	enum lifetime_policy_type type;
+ 	// This could be extended in the future to allow other types of policies
+-	__gc_callback_t addref;
+-	__gc_callback_t delref;
++	union {
++		struct {
++			__gc_callback_t addref;
++			__gc_callback_t delref;
++		} gc;
++		struct {} manual; // Placeholder
++	} policy;
+ };
+ 
+ static unsigned __last_free_lifetime_policy_id = 1;
+@@ -22,21 +34,26 @@ int __liballocs_register_gc_policy(__gc_callback_t addref, __gc_callback_t delre
+ 
+ 	__lifetime_policies[id] = (struct lifetime_policy)
+ 	{
+-		.addref = addref,
+-		.delref = delref
++		.type = LIFETIME_POLICY_GC,
++		.policy = {
++			.gc = {
++				.addref = addref,
++				.delref = delref
++			}
++		}
+ 	};
+ 
+ 	return id;
+ }
+ 
+-static inline lifetime_insert_t *get_lifetime_insert_info(const void *obj,
++static inline INSERT_TYPE *get_lifetime_insert_info(const void *obj,
+ 		const void **out_allocstart, void (**out_free_fn)(struct allocated_chunk *))
+ {
+ 	if ((char *) obj < MINIMUM_USER_ADDRESS || (char *) obj > MAXIMUM_USER_ADDRESS)
+ 		return NULL;
+ 
+ 	struct big_allocation *maybe_the_allocation;
+-	struct allocator *a = __liballocs_leaf_allocator_for(obj, NULL, &maybe_the_allocation);
++	struct allocator *a = __liballocs_leaf_allocator_for(obj, &maybe_the_allocation);
+ 	if (!a || !ALLOCATOR_HANDLE_LIFETIME_INSERT(a)) return NULL;
+ 
+ 	void *allocstart;
+@@ -53,8 +70,8 @@ void __liballocs_attach_lifetime_policy(int policy_id, const void *obj)
+ {
+ 	assert(policy_id >= 0);
+ 
+-	lifetime_insert_t *lti = get_lifetime_insert_info(obj, NULL, NULL);
+-	if (lti) *lti |= LIFETIME_POLICY_FLAG(policy_id);
++	INSERT_TYPE *lti = get_lifetime_insert_info(obj, NULL, NULL);
++	if (lti) *lti |= LIFETIME_POLICY_FLAG(policy_id); // ZMTODO
+ }
+ 
+ void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
+@@ -63,11 +80,11 @@ void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
+ 
+ 	const void *allocstart;
+ 	void (*free_fn)(struct allocated_chunk *);
+-	lifetime_insert_t *lti = get_lifetime_insert_info(obj, &allocstart, &free_fn);
++	INSERT_TYPE *lti = get_lifetime_insert_info(obj, &allocstart, &free_fn);
+ 	if (lti)
+ 	{
+-		*lti &= ~LIFETIME_POLICY_FLAG(policy_id);
+-		if (!*lti) free_fn((struct allocated_chunk *) allocstart);
++		lti->with_type.lifetime_policies &= ~LIFETIME_POLICY_FLAG(policy_id);
++		if (!*lti) free_fn((struct allocated_chunk *) allocstart); //ZMTODO
+ 	}
+ }
+ 
+@@ -77,14 +94,14 @@ void __notify_ptr_write(const void **dest, const void *val)
+ 	// Override version in liballocs.c
+ 	const void *old_val = *dest;
+ 	const void *old_allocstart;
+-	lifetime_insert_t *old_lti = get_lifetime_insert_info(old_val, &old_allocstart, NULL);
++	INSERT_TYPE *old_lti = get_lifetime_insert_info(old_val, &old_allocstart, NULL);
+ 	if (old_lti && HAS_LIFETIME_POLICIES_ATTACHED(*old_lti))
+ 	{
+ 		// Must be saved on stack to prevent use after free of old_lti
+-		lifetime_insert_t policies_attached = *old_lti;
++		INSERT_TYPE policies_attached = *old_lti;
+ 		for (unsigned i = 1; i < LIFETIME_POLICIES; ++i)
+ 		{
+-			if (policies_attached & LIFETIME_POLICY_FLAG(i))
++			if (policies_attached.with_type.lifetime_policies & LIFETIME_POLICY_FLAG(i))
+ 			{
+ 				// old_allocstart destination cannot have been freed if we are here
+ 				__lifetime_policies[i].delref(old_allocstart, dest);
+@@ -93,12 +110,12 @@ void __notify_ptr_write(const void **dest, const void *val)
+ 	}
+ 
+ 	const void *new_allocstart;
+-	lifetime_insert_t *new_lti = get_lifetime_insert_info(val, &new_allocstart, NULL);
++	INSERT_TYPE *new_lti = get_lifetime_insert_info(val, &new_allocstart, NULL);
+ 	if (new_lti && HAS_LIFETIME_POLICIES_ATTACHED(*new_lti))
+ 	{
+ 		for (unsigned i = 1; i < LIFETIME_POLICIES; ++i)
+ 		{
+-			if (*new_lti & LIFETIME_POLICY_FLAG(i))
++			if (new_lti->with_type.lifetime_policies & LIFETIME_POLICY_FLAG(i))
+ 			{
+ 				__lifetime_policies[i].addref(new_allocstart, dest);
+ 			}
+@@ -180,7 +197,7 @@ static unsigned long notify_copy_for_type(void *dest, const void *src, unsigned
+ static struct uniqtype *try_get_alloc_type(void *obj)
+ {
+ 	struct big_allocation *maybe_the_allocation;
+-	struct allocator *a = __liballocs_leaf_allocator_for(obj, NULL, &maybe_the_allocation);
++	struct allocator *a = __liballocs_leaf_allocator_for(obj, &maybe_the_allocation);
+ 	if (!a) return NULL;
+ 
+ 	// HACK: We want to avoid generating unrecognized heap alloc site errors
+diff --git a/tools/stubgen.h b/tools/stubgen.h
+index 09c0eb4..ee91b91 100644
+--- a/tools/stubgen.h
++++ b/tools/stubgen.h
+@@ -374,10 +374,9 @@ int ALLOC_EVENT(pre_nonnull_free)(void *userptr, size_t freed_usable_size) \
+ { \
+ 	if (initial_lifetime_policies) /* always statically known but we can't #ifdef here */ \
+ 	{ \
+-		lifetime_insert_t *lti = lifetime_insert_for_chunk(userptr, sizefn); \
+-		/* GitHub issue #21: are different free functions different policies? not yet... */ \
+-		if (lti) *lti &= ~MANUAL_DEALLOCATION_FLAG; \
+-		if (lti && *lti) return 1; /* Cancel free if we are still alive */ \
++		INSERT_TYPE *lti = insert_for_chunk(userptr, sizefn); \
++		lti->with_type.lifetime_policies &= ~LIFETIME_POLICY_FLAG(0); /* ZMTODO: This should not be 0 by default, but the one corresponding to this free */ \
++		if (lti->with_type.lifetime_policies != 0) return 1; /* Cancel free if we are still alive */ \
+ 		__notify_free(userptr); \
+ 	} \
+ 	index_namefrag ## _index_delete(&ALLOC_ALLOCATOR_NAME(allocator_namefrag), \
+-- 
+2.51.0
+
+
+From bb9ffb1d453cde27b31fb379975416ad3c4e6dce Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Sun, 3 Aug 2025 06:49:02 +0100
+Subject: [PATCH 03/10] chore: refactor insert into entry, no lookup table yet
+
+---
+ src/allocators/generic_small.c | 254 +++++++++++++++++++--------------
+ 1 file changed, 145 insertions(+), 109 deletions(-)
+
+diff --git a/src/allocators/generic_small.c b/src/allocators/generic_small.c
+index e703b9a..c8757e4 100644
+--- a/src/allocators/generic_small.c
++++ b/src/allocators/generic_small.c
+@@ -14,9 +14,40 @@
+ #include "maps.h"
+ #include "liballocs_private.h"
+ 
++
++struct entry {
++	union {
++		struct {
++			union {
++				unsigned long alloc_site:48;
++				struct {
++					unsigned alloc_site_id:16;
++					unsigned long uniqtype_id:28;
++					unsigned lifetime_policies:4;
++				} typed;	 
++			}; 
++		    unsigned mod:16; /* Object start modulus */
++		} regular;
++		struct {
++			unsigned size_in_bucket:8;
++			unsigned always_zero:8;
++			unsigned long size:32;
++			unsigned always_zero2:16;
++		} continuation;
++	};
++} __attribute((packed));
++
++
+ #ifndef NO_PTHREADS
+ #define THE_MUTEX &mutex
+ /* We're recursive only because assertion failures sometimes want to do 
++#define BIG_LOCK \
++	lock_ret = pthread_mutex_lock(&mutex); \
++	assert(lock_ret == 0);
++#define BIG_UNLOCK \
++	lock_ret = pthread_mutex_unlock(&mutex); \
++	assert(lock_ret == 0);
++/* We're recursive only because assertioalloc_siten failures sometimes want to do 
+  * asprintf, so try to re-acquire our mutex. */
+ static pthread_mutex_t mutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+ #endif
+@@ -40,7 +71,7 @@ static pthread_mutex_t mutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+ /* The info that describes the whole arena that we're allocating out of. */
+ struct chunk_rec
+ {
+-	struct insert *metadata_recs;
++	struct entry *metadata_recs;
+ 	unsigned long *starts_bitmap;
+ 	size_t power_of_two_size;
+ 	char log_pitch;
+@@ -69,7 +100,10 @@ struct chunk_rec
+  * layer, then try deeper layers until we find the entry we're looking
+  * for or an empty reord
+  * 
+- * A memrect is defined by the following parameters:
++ * A memrect is defined by the following pa
++
++static inline
++uintptr_t memrect_modulus_of_addr(void *addrrameters:
+  *    base address covered,
+  *    length of covered region,
+  *    pitch (log-base-two)
+@@ -110,43 +144,44 @@ memrect_bucket_range_base(void *bucket, void *rect_base, void *table_coverage_st
+ 	 (p_chunk_rec)->log_pitch))
+ #define NLAYERS(p_chunk_rec) (1ul<<(p_chunk_rec)->log_pitch)
+ 
+-#define LOG_INSERT_SIZE 3 /* insert size is 8 */
++#define LOG_ENTRY_SIZE 3 /* entry size is 8 */
+ 
+ #define BUCKET_RANGE_BASE(p_bucket, p_chunk_rec, coverage_start) \
+ 	(memrect_bucket_range_base((p_bucket), (p_chunk_rec)->metadata_recs, \
+-		(coverage_start), (p_chunk_rec)->log_pitch, LOG_INSERT_SIZE))
++		(coverage_start), (p_chunk_rec)->log_pitch, LOG_ENTRY_SIZE))
+     
+ #define BUCKET_RANGE_END(p_bucket, p_chunk_rec, coverage_start) \
+     (((char*)BUCKET_RANGE_BASE((p_bucket), (p_chunk_rec), (coverage_start))) + (1u<<(p_chunk_rec)->log_pitch))
+-#define BUCKET_PTR_FROM_ENTRY_PTR(p_ins, p_chunk_rec, container) \
+-	((p_chunk_rec)->metadata_recs + (((p_ins) - (p_chunk_rec)->metadata_recs) % \
++#define BUCKET_PTR_FROM_ENTRY_PTR(p_ent, p_chunk_rec, container) \
++	((p_chunk_rec)->metadata_recs + (((p_ent) - (p_chunk_rec)->metadata_recs) % \
+ 	memrect_entries_per_layer((p_chunk_rec)->power_of_two_size, (p_chunk_rec)->log_pitch)))
+-/* Terminators must have the alloc_site and the flag both unset. */
+-#define ENTRY_IS_NULL(p_ins) (!IS_WITH_TYPE(p_ins) && !p_ins->initial.alloc_site )
+ 
+-/* Continuation records have the flag set and a non-user-address (actually the object
+- * size) in the alloc_site. */
+-#define IS_CONTINUATION_ENTRY(ins) \
+-	(!(INSERT_DESCRIBES_OBJECT(ins)) && IS_WITH_TYPE(ins))
+-#define ENTRY_GET_STORED_OFFSET(ins) ((ins)->with_type.alloc_site_id & 0xff)
+-#define ENTRY_GET_THISBUCKET_SIZE(ins) (((ins)->with_type.alloc_site_id >> 8) == 0 ? 256 : ((ins)->with_type.alloc_site_id >> 8))
++
++
++#define IS_CONTINUATION_ENTRY(entry) \
++	((entry)->continuation.always_zero == 0 && (entry)->continuation.always_zero2 == 0)
++
++#define ENTRY_IS_NULL(p_ent) ((!IS_CONTINUATION_ENTRY(p_ent)) && !((p_ent->regular.alloc_site)))
++
++#define ENTRY_GET_STORED_OFFSET(ent) ((ent)->regular.mod & 0xff)
++#define ENTRY_GET_THISBUCKET_SIZE(ent) (((ent)->regular.mod >> 8) == 0 ? 256 : ((ent)->regular.mod >> 8))
+ 
+ static
+-struct insert *lookup_small_alloc(const void *ptr, 
++struct entry *lookup_small_alloc(const void *ptr, 
+ 		struct chunk_rec *p_chunk_rec,
+ 		struct big_allocation *container,
+ 		void **out_object_start,
+ 		size_t *out_object_size);
+ 
+-static void unindex_small_alloc_internal_with_ins(void *ptr, struct chunk_rec *p_chunk_rec, struct big_allocation *container,
+-	struct insert *p_ins);
++static void unindex_small_alloc_internal_with_ent(void *ptr, struct chunk_rec *p_chunk_rec, struct big_allocation *container,
++	struct entry *p_ent);
+ 
+ static void unindex_small_alloc_internal(void *ptr, struct chunk_rec *p_chunk_rec,
+ 	struct big_allocation *container);
+ 
+ static 
+ void 
+-check_bucket_sanity(struct insert *p_bucket, struct chunk_rec *p_chunk_rec, struct big_allocation *container);
++check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struct big_allocation *container);
+ 
+ #define MAX_PITCH 256 /* Don't support larger than 256-byte pitches, s.t. remainder fits in one byte */
+ 
+@@ -171,7 +206,7 @@ static struct chunk_rec *make_suballocated_chunk(void *chunk_base, size_t chunk_
+ 	
+ 	/* The size of a layer is (normally) 
+ 	 * the number of bytes required to store one metadata entry per average-size unit. */
+-	p_chunk_rec->one_layer_nbytes = (sizeof (struct insert)) * (p_chunk_rec->power_of_two_size >> p_chunk_rec->log_pitch);
++	p_chunk_rec->one_layer_nbytes = (sizeof (struct entry)) * (p_chunk_rec->power_of_two_size >> p_chunk_rec->log_pitch);
+ 	assert(is_power_of_two(p_chunk_rec->one_layer_nbytes));
+ 	
+ 	/* For small chunks, we might not fill a page, so resize the pitch so that we do. */
+@@ -180,12 +215,12 @@ static struct chunk_rec *make_suballocated_chunk(void *chunk_base, size_t chunk_
+ 		// force a one-page layer size, and recalculate the pitch
+ 		p_chunk_rec->one_layer_nbytes = PAGE_SIZE;
+ 		/* 
+-		      one_layer_nbytes == sizeof insert * chunk_size / pitch
++		      one_layer_nbytes == sizeof entry * chunk_size / pitch
+ 		
+-		  =>  pitch            == sizeof insert * chunk_size / one_layer_nbytes
++		  =>  pitch            == sizeof entry * chunk_size / one_layer_nbytes
+ 		  
+ 		*/
+-		unsigned pitch = ((sizeof (struct insert)) * p_chunk_rec->power_of_two_size) >> LOG_PAGE_SIZE;
++		unsigned pitch = ((sizeof (struct entry)) * p_chunk_rec->power_of_two_size) >> LOG_PAGE_SIZE;
+ 		assert(is_power_of_two(pitch));
+ 		p_chunk_rec->log_pitch = integer_log2(pitch);
+ 		/* Note also that 
+@@ -193,7 +228,7 @@ static struct chunk_rec *make_suballocated_chunk(void *chunk_base, size_t chunk_
+ 		      one_layer_nrecs  == chunk_size / pitch
+ 		*/
+ 	}
+-	unsigned nbuckets = p_chunk_rec->one_layer_nbytes / sizeof (struct insert);
++	unsigned nbuckets = p_chunk_rec->one_layer_nbytes / sizeof (struct entry);
+ 	assert(nbuckets < (uintptr_t) MINIMUM_USER_ADDRESS); // see note about size in index logic, below
+ 	// FIXME: if this fails, increase the pitch until it's true
+ 	
+@@ -201,7 +236,7 @@ static struct chunk_rec *make_suballocated_chunk(void *chunk_base, size_t chunk_
+ 	 * to go right down to byte-sized allocations.
+ 	 * 
+ 	 * It follows that we allocate enough virtual memory for one entry per byte. */
+-	unsigned long nbytes = (sizeof (struct insert)) * p_chunk_rec->power_of_two_size;
++	unsigned long nbytes = (sizeof (struct entry)) * p_chunk_rec->power_of_two_size;
+ 
+ 	p_chunk_rec->metadata_recs = mmap(NULL, nbytes,
+ 			PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0);
+@@ -253,26 +288,26 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 	
+ 	/* Get the relevant bucket. */
+ 	unsigned long bucket_num = memrect_nbucket_of(ptr, container->begin, p_chunk_rec->log_pitch);
+-	struct insert *p_bucket = p_chunk_rec->metadata_recs + bucket_num;
++	struct entry *p_bucket = p_chunk_rec->metadata_recs + bucket_num;
+ 	check_bucket_sanity(p_bucket, p_chunk_rec, container);
+ 
+ 	/* Now we need to find a free metadata entry to index this allocation at. */
+ 	/* What's the first layer that's free? */
+-	struct insert *p_ins = p_bucket;
++	struct entry *p_ent = p_bucket;
+ 	unsigned layer_num = 0;
+-	while (!ENTRY_IS_NULL(p_ins))
++	while (!ENTRY_IS_NULL(p_ent))
+ 	{
+-		p_ins += ENTRIES_PER_LAYER(p_chunk_rec);
++		p_ent += ENTRIES_PER_LAYER(p_chunk_rec);
+ 		++layer_num;
+ 	}
+ 	// we should never need to go beyond the last layer
+ 	assert(layer_num < NLAYERS(p_chunk_rec));
+ 	
+-	/* Store the insert. The object start modulus goes in `bits'. */
+-	p_ins->initial.unused = 0u;
++	/* Store the entry. The object start modulus goes in `bits'. */
++	p_ent->regular.alloc_site = __current_allocsite;
+ 	
+ 	/* We also need to represent the object's size somehow. We choose to use 
+-	 * continuation entries since the insert doesn't have enough bits. Continuation entries
++	 * continuation entries since the entry doesn't have enough bits. Continuation entries
+ 	 * have alloc_site_flag == 1 and alloc_site < MINIMUM_USER_ADDRESS, and the "overhang"
+ 	 * in bits (0 means "full bucket"). 
+ 	 * The alloc site entries the bucket number in which the object starts. This limits us to
+@@ -285,7 +320,8 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 	assert(thisbucket_size != 0);
+ 	assert(thisbucket_size <= (1u << p_chunk_rec->log_pitch));
+ 	
+-	p_ins->with_type.alloc_site_id = (thisbucket_size << 8) | modulus;
++
++	p_ent->regular.mod = (thisbucket_size << 8) | modulus; // ZM: this is normal generic_small allocator entry
+ 	
+ 	/* We should be sane already, even though our continuation is not recorded. */
+ 	check_bucket_sanity(p_bucket, p_chunk_rec, container);
+@@ -293,14 +329,14 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 	/* If we spill into the next bucket, set the continuation entry */
+ 	if ((char*)(BUCKET_RANGE_END(p_bucket, p_chunk_rec, container->begin)) < end_addr)
+ 	{
+-		struct insert *p_continuation_bucket = p_bucket + 1;
++		struct entry *p_continuation_bucket = p_bucket + 1;
+ 		assert(p_continuation_bucket - &p_chunk_rec->metadata_recs[0] < (uintptr_t) MINIMUM_USER_ADDRESS);
+ 		check_bucket_sanity(p_continuation_bucket, p_chunk_rec, container);
+-		struct insert *p_continuation_ins = p_continuation_bucket;
++		struct entry *p_continuation_ent = p_continuation_bucket;
+ 		/* Find a free slot */
+ 		unsigned layer_num = 0;
+-		while (!ENTRY_IS_NULL(p_continuation_ins))
+-		{ p_continuation_ins += ENTRIES_PER_LAYER(p_chunk_rec); ++layer_num; }
++		while (!ENTRY_IS_NULL(p_continuation_ent))
++		{ p_continuation_ent += ENTRIES_PER_LAYER(p_chunk_rec); ++layer_num; }
+ 		assert(layer_num < NLAYERS(p_chunk_rec));
+ 		
+ 		//unsigned short thisbucket_size = (end_addr >= BUCKET_RANGE_BASE(p_bucket + 1, p_chunk_rec))
+@@ -316,13 +352,15 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 		// install the continuation entry
+ 		assert(size_bytes > 0);
+ 		assert(size_bytes < (uintptr_t) MINIMUM_USER_ADDRESS);
+-		*p_continuation_ins = (struct insert) {
+-			.with_type = { 
+-				alloc_site_id: (unsigned short) (size_in_continuation_bucket << 8),
+-				uniqtype_shifted: size_bytes // NOTE what we're doing here! the object size goes into the uniqtype field
++		*p_continuation_ent = (struct entry) {
++			.continuation = {
++				size_in_bucket: (unsigned short) (size_in_continuation_bucket << 8),
++				always_zero: 0,
++				size: size_bytes,
++				always_zero2:0
+ 			}
+ 		};
+-		assert(IS_CONTINUATION_ENTRY(p_continuation_ins));
++		assert(IS_CONTINUATION_ENTRY(p_continuation_ent));
+ 		check_bucket_sanity(p_continuation_bucket, p_chunk_rec, container);
+ 	}
+ 	
+@@ -330,11 +368,11 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 	if (p_chunk_rec->biggest_object < size_bytes) p_chunk_rec->biggest_object = size_bytes;
+ 	
+ #ifndef NDEBUG
+-	struct insert *p_found_ins1 = lookup_small_alloc(ptr, p_chunk_rec, container, NULL, NULL);
+-	assert(p_found_ins1 == p_ins);
+-	struct insert *p_found_ins2 = lookup_small_alloc((char*) ptr + size_bytes - 1, 
++	struct entry *p_found_ent1 = lookup_small_alloc(ptr, p_chunk_rec, container, NULL, NULL);
++	assert(p_found_ent1 == p_ent);
++	struct entry *p_found_ent2 = lookup_small_alloc((char*) ptr + size_bytes - 1, 
+ 		p_chunk_rec, container, NULL, NULL);
+-	assert(p_found_ins2 == p_ins);
++	assert(p_found_ent2 == p_ent);
+ #endif
+ 	
+ #endif
+@@ -345,22 +383,22 @@ static void unindex_all_overlapping(void *unindex_start, void *unindex_end,
+ {
+ 	unsigned long bucket_num = memrect_nbucket_of(unindex_start, container->begin,
+ 		p_chunk_rec->log_pitch);
+-	struct insert *p_bucket = p_chunk_rec->metadata_recs + bucket_num;
++	struct entry *p_bucket = p_chunk_rec->metadata_recs + bucket_num;
+ 	// 0. handle the case of an object starting [maybe much] earlier
+ 	// creeping over into this bucket.
+ 	void *earlier_object_start;
+ 	size_t earlier_object_size;
+-	struct insert *p_old_ins = lookup_small_alloc(unindex_start, p_chunk_rec,
++	struct entry *p_old_ent = lookup_small_alloc(unindex_start, p_chunk_rec,
+ 		container, &earlier_object_start, &earlier_object_size);
+-	if (p_old_ins) 
++	if (p_old_ent) 
+ 	{
+-		unindex_small_alloc_internal_with_ins(earlier_object_start, p_chunk_rec, 
+-			container, p_old_ins);
++		unindex_small_alloc_internal_with_ent(earlier_object_start, p_chunk_rec, 
++			container, p_old_ent);
+ 	}
+ 	
+ 	unsigned short modulus = memrect_modulus_of_addr(unindex_start, container->begin, p_chunk_rec->log_pitch);
+ 	// 1. now any object that overlaps us must start later than us, walk up the buckets
+-	for (struct insert *p_search_bucket = p_bucket;
++	for (struct entry *p_search_bucket = p_bucket;
+ 			// we might find an object overlapping that starts in this bucket if 
+ 			// -- our bucket range base is not later than the end of our object, and
+ 			// -- our bucket range end is not earlier than the 
+@@ -369,14 +407,14 @@ static void unindex_all_overlapping(void *unindex_start, void *unindex_end,
+ 			
+ 			++p_search_bucket)
+ 	{
+-		for (struct insert *i_layer = p_search_bucket; 
++		for (struct entry *i_layer = p_search_bucket; 
+ 				!ENTRY_IS_NULL(i_layer); 
+ 				i_layer += ENTRIES_PER_LAYER(p_chunk_rec))
+ 		{
+ 			/* Does this object overlap our allocation? */
+ 			char *this_object_start;
+ 			char *this_object_end_thisbucket;
+-			struct insert *this_object_ins;
++			struct entry *this_object_ent;
+ 			
+ 			/* We don't care about continuation entrys; we'll find the 
+ 			 * start record before any relevant continuation record. */
+@@ -393,7 +431,7 @@ static void unindex_all_overlapping(void *unindex_start, void *unindex_end,
+ 			if (this_object_start < (char*) unindex_end 
+ 					&& this_object_end_thisbucket > (char*) unindex_start)
+ 			{
+-				unindex_small_alloc_internal_with_ins(this_object_start, p_chunk_rec, 
++				unindex_small_alloc_internal_with_ent(this_object_start, p_chunk_rec, 
+ 					container, i_layer);
+ 				/* HACK: this deletes i_layer, so move it back one. */
+ 				i_layer -= ENTRIES_PER_LAYER(p_chunk_rec);
+@@ -470,27 +508,27 @@ int __index_small_alloc(void *ptr, int level, unsigned size_bytes)
+ }
+ 
+ static _Bool
+-get_start_from_continuation(struct insert *p_ins, struct insert *p_bucket, 
++get_start_from_continuation(struct entry *p_ent, struct entry *p_bucket, 
+ 		struct chunk_rec *p_chunk_rec, struct big_allocation *container,
+-		void **out_object_start, size_t *out_object_size, struct insert **out_object_ins)
++		void **out_object_start, size_t *out_object_size, struct entry **out_object_ent)
+ {
+ 	/* NOTE: don't sanity check buckets in this function, because we might be 
+ 	 * called from inside check_bucket_sanity(). */
+ 	
+ 	// the object starts somewhere in the previous bucket
+ 	// okay: hop back to the object start
+-	struct insert *p_object_start_bucket = p_bucket - 1;
++	struct entry *p_object_start_bucket = p_bucket - 1;
+ 
+ 	// walk the object start bucket looking for the *last* object i.e. biggest modulus
+-	struct insert *object_ins;
+-	struct insert *biggest_modulus_pos = NULL;
+-	for (struct insert *i_layer = p_object_start_bucket;
++	struct entry *object_ent;
++	struct entry *biggest_modulus_pos = NULL;
++	for (struct entry *i_layer = p_object_start_bucket;
+ 			!ENTRY_IS_NULL(i_layer);
+ 			i_layer += ENTRIES_PER_LAYER(p_chunk_rec))
+ 	{
+ 		if (IS_CONTINUATION_ENTRY(i_layer)) continue;
+ 		// the modulus tells us where this object starts in the bucket range
+-		unsigned short modulus = p_object_start_bucket->with_type.alloc_site_id & 0xff;
++		unsigned short modulus = p_object_start_bucket->regular.mod & 0xff;
+ 		if (!biggest_modulus_pos || 
+ 				ENTRY_GET_STORED_OFFSET(i_layer) > ENTRY_GET_STORED_OFFSET(biggest_modulus_pos))
+ 		{
+@@ -499,34 +537,34 @@ get_start_from_continuation(struct insert *p_ins, struct insert *p_bucket,
+ 	}
+ 	// we must have seen the last object
+ 	assert(biggest_modulus_pos);
+-	object_ins = biggest_modulus_pos;
++	object_ent = biggest_modulus_pos;
+ 	char *object_start = (char*)(BUCKET_RANGE_BASE(p_object_start_bucket, p_chunk_rec, container->begin)) 
+ 			+ ENTRY_GET_STORED_OFFSET(biggest_modulus_pos);
+-	uintptr_t object_size = p_ins->with_type.alloc_site_id;
++	uintptr_t object_size = p_ent->continuation.size;
+ 
+ 	if (out_object_start) *out_object_start = object_start;
+ 	if (out_object_size) *out_object_size = object_size;
+-	if (out_object_ins) *out_object_ins = object_ins;
++	if (out_object_ent) *out_object_ent = object_ent;
+ 	
+ 	return 1;
+ }
+ 
+ static 
+ void 
+-check_bucket_sanity(struct insert *p_bucket, struct chunk_rec *p_chunk_rec, struct big_allocation *container)
++check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struct big_allocation *container)
+ {
+ #ifndef NDEBUG
+ 	/* Walk the bucket */
+ 	unsigned layer_num = 0;
+-	for (struct insert *i_layer = p_bucket;
++	for (struct entry *i_layer = p_bucket;
+ 			!ENTRY_IS_NULL(i_layer);
+ 			i_layer += ENTRIES_PER_LAYER(p_chunk_rec), ++layer_num)
+ 	{
+ 		// we should never need to go beyond the last layer
+ 		assert(layer_num < NLAYERS(p_chunk_rec));
+ 
+-		unsigned short thisbucket_size = i_layer->with_type.alloc_site_id >> 8;
+-		unsigned short modulus = i_layer->with_type.alloc_site_id & 0xff;
++		unsigned short thisbucket_size = i_layer->regular.mod >> 8;
++		unsigned short modulus = i_layer->regular.mod & 0xff;
+ 
+ 		assert(modulus < (1u << p_chunk_rec->log_pitch));
+ 		
+@@ -538,12 +576,12 @@ check_bucket_sanity(struct insert *p_bucket, struct chunk_rec *p_chunk_rec, stru
+ 		}
+ 		
+ 		/* Check we don't overlap with anything else in this bucket. */
+-		for (struct insert *i_earlier_layer = p_bucket;
++		for (struct entry *i_earlier_layer = p_bucket;
+ 			i_earlier_layer != i_layer;
+ 			i_earlier_layer += ENTRIES_PER_LAYER(p_chunk_rec))
+ 		{
+-			unsigned short thisbucket_earlier_size = i_earlier_layer->with_type.alloc_site_id >> 8;
+-			unsigned short earlier_modulus = i_earlier_layer->with_type.alloc_site_id & 0xff;
++			unsigned short thisbucket_earlier_size = i_earlier_layer->regular.mod >> 8;
++			unsigned short earlier_modulus = i_earlier_layer->regular.mod & 0xff;
+ 
+ 			// note that either entry might be a continuation entry
+ 			// ... in which case zero-size means "the whole bucket"
+@@ -571,7 +609,7 @@ static void delete_suballocated_chunk(struct chunk_rec *p_rec)
+ 	*p_bitmap_word &= ~(1ul<<bit_index);
+ 
+ 	/* munmap it. */
+-	int ret = munmap(p_rec->metadata_recs, (sizeof (struct insert)) * p_rec->size);
++	int ret = munmap(p_rec->metadata_recs, (sizeof (struct entry)) * p_rec->size);
+ 	assert(ret == 0);
+ 	ret = munmap(p_rec->starts_bitmap,
+ 		sizeof (unsigned long) * (p_rec->real_size / UNSIGNED_LONG_NBITS));
+@@ -586,7 +624,7 @@ static void delete_suballocated_chunk(struct chunk_rec *p_rec)
+ }
+ 
+ static
+-struct insert *lookup_small_alloc(const void *ptr,
++struct entry *lookup_small_alloc(const void *ptr,
+ 		struct chunk_rec *p_chunk_rec,
+ 		struct big_allocation *container,
+ 		void **out_object_start,
+@@ -599,8 +637,8 @@ struct insert *lookup_small_alloc(const void *ptr,
+ 	 * If it has itself been sub-allocated, we recurse (FIXME), 
+ 	 * and if that fails, stick with the result we have. */
+ 	unsigned start_bucket_num = memrect_nbucket_of((void*) ptr, container->begin, p_chunk_rec->log_pitch);
+-	struct insert *p_start_bucket = &p_chunk_rec->metadata_recs[start_bucket_num];
+-	struct insert *p_bucket = p_start_bucket;
++	struct entry *p_start_bucket = &p_chunk_rec->metadata_recs[start_bucket_num];
++	struct entry *p_bucket = p_start_bucket;
+ 	_Bool must_see_continuation = 0; // a bit like seen_object_starting_earlier
+ 	char *earliest_possible_start = (char*) ptr - p_chunk_rec->biggest_object;
+ 	do 
+@@ -611,9 +649,9 @@ struct insert *lookup_small_alloc(const void *ptr,
+ 		check_bucket_sanity(p_bucket, p_chunk_rec, container);
+ 		
+ 		unsigned layer_num = 0;
+-		for (struct insert *p_ins = p_bucket;
+-			!ENTRY_IS_NULL(p_ins);
+-			p_ins += ENTRIES_PER_LAYER(p_chunk_rec), ++layer_num)
++		for (struct entry *p_ent = p_bucket;
++			!ENTRY_IS_NULL(p_ent);
++			p_ent += ENTRIES_PER_LAYER(p_chunk_rec), ++layer_num)
+ 		{
+ 			// we should never need to go beyond the last layer
+ 			assert(layer_num < NLAYERS(p_chunk_rec));
+@@ -623,26 +661,23 @@ struct insert *lookup_small_alloc(const void *ptr,
+ 			 *
+ 			 * it's an object start entry (ditto).
+ 			 */
+-			unsigned short object_size_in_this_bucket = p_ins->with_type.alloc_site_id >> 8;
+-			unsigned short modulus = p_ins->with_type.alloc_site_id & 0xff;
+ 
+-			if (IS_CONTINUATION_ENTRY(p_ins))
++			if (IS_CONTINUATION_ENTRY(p_ent))
+ 			{
+ 				/* Does this continuation overlap our search address? */
+-				assert(modulus == 0); // continuation recs have modulus zero
+-				
++			
+ 				void *object_start;
+ 				size_t object_size;
+-				struct insert *object_ins;
+-				_Bool success = get_start_from_continuation(p_ins, p_bucket,
++				struct entry *object_ent;
++				_Bool success = get_start_from_continuation(p_ent, p_bucket,
+ 						p_chunk_rec, container,
+-						&object_start, &object_size, &object_ins);
++						&object_start, &object_size, &object_ent);
+ 				
+ 				if ((char*) object_start + object_size > (char*) ptr)
+ 				{
+ 					// hit! 
+ 					if (out_object_start) *out_object_start = object_start;
+-					return object_ins;
++					return object_ent;
+ 				}
+ 				// else it's a continuation that we don't overlap
+ 				// -- we can give up 
+@@ -651,7 +686,8 @@ struct insert *lookup_small_alloc(const void *ptr,
+ 			else 
+ 			{
+ 				/* It's an object start entry. Does it overlap? */
+-				char modulus = p_ins->with_type.alloc_site_id & 0xff;
++				char modulus = p_ent->regular.mod & 0xff;
++				unsigned short object_size_in_this_bucket = p_ent->regular.mod >> 8;
+ 				char *object_start_addr = thisbucket_base_addr + modulus;
+ 				void *object_end_addr = object_start_addr + object_size_in_this_bucket;
+ 
+@@ -660,7 +696,7 @@ struct insert *lookup_small_alloc(const void *ptr,
+ 					// hit!
+ 					if (out_object_start) *out_object_start = object_start_addr;
+ 					if (out_object_size) *out_object_size = object_size_in_this_bucket;
+-					return p_ins;
++					return p_ent;
+ 				}
+ 			}
+ 		} // end for each layer
+@@ -674,17 +710,17 @@ fail:
+ 	return NULL;
+ }
+ 
+-static void remove_one_insert(struct insert *p_ins, struct insert *p_bucket, struct chunk_rec *p_chunk_rec)
++static void remove_one_entry(struct entry *p_ent, struct entry *p_bucket, struct chunk_rec *p_chunk_rec)
+ {
+-	struct insert *replaced_ins = p_ins;
++	struct entry *replaced_ent = p_ent;
+ 	do
+ 	{
+-		struct insert *p_next_layer = replaced_ins + ENTRIES_PER_LAYER(p_chunk_rec);
+-		/* Copy the next layer's insert over ours. */
+-		*replaced_ins = *p_next_layer;
++		struct entry *p_next_layer = replaced_ent + ENTRIES_PER_LAYER(p_chunk_rec);
++		/* Copy the next layer's entry over ours. */
++		*replaced_ent = *p_next_layer;
+ 		/* Point us at the next layer to replace (i.e. if it's not null). */
+-		replaced_ins = p_next_layer;
+-	} while (!ENTRY_IS_NULL(replaced_ins));
++		replaced_ent = p_next_layer;
++	} while (!ENTRY_IS_NULL(replaced_ent));
+ }
+ 
+ 
+@@ -694,42 +730,42 @@ static void unindex_small_alloc_internal(void *ptr, struct chunk_rec *p_chunk_re
+ 
+ 	void *alloc_start;
+ 	size_t alloc_size;
+-	struct insert *p_ins = lookup_small_alloc(ptr, p_chunk_rec, container, &alloc_start, 
++	struct entry *p_ent = lookup_small_alloc(ptr, p_chunk_rec, container, &alloc_start, 
+ 		&alloc_size);
+-	assert(p_ins);
++	assert(p_ent);
+ 	
+-	unindex_small_alloc_internal_with_ins(ptr, p_chunk_rec, container, p_ins);
++	unindex_small_alloc_internal_with_ent(ptr, p_chunk_rec, container, p_ent);
+ }
+ 
+-static void unindex_small_alloc_internal_with_ins(void *ptr, struct chunk_rec *p_chunk_rec, struct big_allocation *container,
+-	struct insert *p_ins)
++static void unindex_small_alloc_internal_with_ent(void *ptr, struct chunk_rec *p_chunk_rec, struct big_allocation *container,
++	struct entry *p_ent)
+ {
+-	struct insert *p_bucket = BUCKET_PTR_FROM_ENTRY_PTR(p_ins, p_chunk_rec, container);
++	struct entry *p_bucket = BUCKET_PTR_FROM_ENTRY_PTR(p_ent, p_chunk_rec, container);
+ 	check_bucket_sanity(p_bucket, p_chunk_rec, container);
+ 	
+-	unsigned short our_modulus = ENTRY_GET_STORED_OFFSET(p_ins);
++	unsigned short our_modulus = ENTRY_GET_STORED_OFFSET(p_ent);
+ 	_Bool we_are_biggest_modulus = 1;
+-	for (struct insert *i_layer = p_bucket;
++	for (struct entry *i_layer = p_bucket;
+ 			we_are_biggest_modulus && !ENTRY_IS_NULL(i_layer);
+ 			i_layer += ENTRIES_PER_LAYER(p_chunk_rec))
+ 	{
+ 		we_are_biggest_modulus &= (our_modulus >= ENTRY_GET_STORED_OFFSET(i_layer));
+ 	}
+ 	
+-	/* Delete this insert and "shift left" any later in the bucket. */
+-	remove_one_insert(p_ins, p_bucket, p_chunk_rec);
++	/* Delete this entry and "shift left" any later in the bucket. */
++	remove_one_entry(p_ent, p_bucket, p_chunk_rec);
+ 	check_bucket_sanity(p_bucket, p_chunk_rec, container);
+ 	
+ 	/* If we were the biggest modulus, delete any continuation entry in the next bucket. */
+ 	if (we_are_biggest_modulus)
+ 	{
+-		for (struct insert *i_layer = p_bucket + 1;
++		for (struct entry *i_layer = p_bucket + 1;
+ 				!ENTRY_IS_NULL(i_layer);
+ 				i_layer += ENTRIES_PER_LAYER(p_chunk_rec))
+ 		{
+ 			if (IS_CONTINUATION_ENTRY(i_layer))
+ 			{
+-				remove_one_insert(i_layer, p_bucket + 1, p_chunk_rec);
++				remove_one_entry(i_layer, p_bucket + 1, p_chunk_rec);
+ 				check_bucket_sanity(p_bucket + 1, p_chunk_rec, container);
+ 				break;
+ 			}
+@@ -766,7 +802,7 @@ static liballocs_err_t get_info(void *obj, struct big_allocation *b,
+ 		? BIDX(b->parent)
+ 		 : __lookup_deepest_bigalloc(obj);
+ 	
+-	struct insert *heap_info = lookup_small_alloc(obj, container->suballocator_private,
++	struct entry *heap_info = lookup_small_alloc(obj, container->suballocator_private,
+ 		container, out_base, out_size);
+ 	if (!heap_info)
+ 	{
+-- 
+2.51.0
+
+
+From ddc9ec31253cd53eeb38713fb0c2689351eb834b Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Tue, 30 Sep 2025 08:04:13 +0100
+Subject: [PATCH 04/10] wip
+
+---
+ include/generic_malloc_index.h |  6 +--
+ include/malloc-meta.h          | 11 ++----
+ src/allocators/generic_small.c | 71 +++++++++++++++-------------------
+ 3 files changed, 39 insertions(+), 49 deletions(-)
+
+diff --git a/include/generic_malloc_index.h b/include/generic_malloc_index.h
+index c4b363d..882d675 100644
+--- a/include/generic_malloc_index.h
++++ b/include/generic_malloc_index.h
+@@ -19,7 +19,7 @@
+ /* A thread-local variable to override the "caller" arguments. 
+  * Platforms without TLS have to do without this feature. */
+ #ifndef NO_TLS
+-extern __thread void *__current_allocsite;
++extern __thread void *__current_allocsite; // OR Uniqtype
+ extern __thread void *__current_allocfn;
+ extern __thread size_t __current_allocsz;
+ extern __thread int __currently_freeing;
+@@ -778,8 +778,8 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		// it a dynamically-sized alloc with a uniqtype.
+ 		// This means we're the first query to rewrite the alloc site,
+ 		// and is the client's queue to go poking in the insert.
+-		p_ins->initial.unused = 0;
+-		p_ins->initial.alloc_site = (uintptr_t) alloc_uniqtype /* | 0x0ul */;
++		p_ins->with_type.alloc_site_id = 1; // ZMTODO: ID
++		p_ins->with_type.uniqtype_shifted = (uintptr_t) alloc_uniqtype >> 4 /* | 0x0ul */;
+ 		/* How do we get the id? Doing a binary search on the by-id spine is
+ 		 * okay because there will be very few of them. We don't want to do
+ 		 * a binary search on the table proper. But that's okay. We get
+diff --git a/include/malloc-meta.h b/include/malloc-meta.h
+index 8d8148e..02bac95 100644
+--- a/include/malloc-meta.h
++++ b/include/malloc-meta.h
+@@ -55,19 +55,16 @@ struct insert {
+ 		struct {
+ 			unsigned unused:16; /* Always Zero, branch union on this */
+ 			unsigned long alloc_site:48;
+-#if LIFETIME_POLICIES > 4
+-	#error "Variable size lifetime policies not fully supported yet"
+-				unsigned unused2:LIFETIME_POLICIES - 4;
+-#endif
+ 		} initial;
+-		struct {
++		struct insert_with_type {
+ 			unsigned alloc_site_id:16; /* Never Zero */
+ 			unsigned long uniqtype_shifted:44;  /* uniqtype ptrs "should be" 16-byte aligned => this field is ((unsigned long) u)>>4 */
+ #if LIFETIME_POLICIES > 4
++		#error "Variable size lifetime policies not fully supported yet"
+ 		unsigned lifetime_policies:LIFETIME_POLICIES; /* TODO: Alignment needed instead of packed in this case */
+ #else
+-		unsigned lifetime_policies:4;
+-#endif 
++		unsigned lifetime_policies:4; // should never be zero 0000 should be that it is freed when and only when parent is freed.
++#endif
+ 		} with_type;
+ 	};
+ } __attribute((packed));
+diff --git a/src/allocators/generic_small.c b/src/allocators/generic_small.c
+index c8757e4..4aaa1a6 100644
+--- a/src/allocators/generic_small.c
++++ b/src/allocators/generic_small.c
+@@ -29,7 +29,7 @@ struct entry {
+ 		    unsigned mod:16; /* Object start modulus */
+ 		} regular;
+ 		struct {
+-			unsigned size_in_bucket:8;
++			unsigned size_in_bucket:8; // 0 means full bucket
+ 			unsigned always_zero:8;
+ 			unsigned long size:32;
+ 			unsigned always_zero2:16;
+@@ -100,10 +100,7 @@ struct chunk_rec
+  * layer, then try deeper layers until we find the entry we're looking
+  * for or an empty reord
+  * 
+- * A memrect is defined by the following pa
+-
+-static inline
+-uintptr_t memrect_modulus_of_addr(void *addrrameters:
++ * A memrect is defined by the following parameters:
+  *    base address covered,
+  *    length of covered region,
+  *    pitch (log-base-two)
+@@ -303,13 +300,10 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 	// we should never need to go beyond the last layer
+ 	assert(layer_num < NLAYERS(p_chunk_rec));
+ 	
+-	/* Store the entry. The object start modulus goes in `bits'. */
+ 	p_ent->regular.alloc_site = __current_allocsite;
+ 	
+ 	/* We also need to represent the object's size somehow. We choose to use 
+-	 * continuation entries since the entry doesn't have enough bits. Continuation entries
+-	 * have alloc_site_flag == 1 and alloc_site < MINIMUM_USER_ADDRESS, and the "overhang"
+-	 * in bits (0 means "full bucket"). 
++	 * continuation entries since the entry doesn't have enough bits.
+ 	 * The alloc site entries the bucket number in which the object starts. This limits us to
+ 	 * 4M buckets, so a 32MByte chunk for 8-byte-pitch, etc., which seems
+ 	 * bearable for the moment. 
+@@ -339,11 +333,6 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 		{ p_continuation_ent += ENTRIES_PER_LAYER(p_chunk_rec); ++layer_num; }
+ 		assert(layer_num < NLAYERS(p_chunk_rec));
+ 		
+-		//unsigned short thisbucket_size = (end_addr >= BUCKET_RANGE_BASE(p_bucket + 1, p_chunk_rec))
+-		//		? 0
+-		//		: (char*) end_addr - (char*) BUCKET_RANGE_BASE(p_bucket, p_chunk_rec);
+-		//assert(thisbucket_size < 256);
+-		
+ 		unsigned long size_after_first_bucket = size_bytes - thisbucket_size;
+ 		assert(size_after_first_bucket != 0);
+ 		unsigned long size_in_continuation_bucket 
+@@ -554,7 +543,6 @@ void
+ check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struct big_allocation *container)
+ {
+ #ifndef NDEBUG
+-	/* Walk the bucket */
+ 	unsigned layer_num = 0;
+ 	for (struct entry *i_layer = p_bucket;
+ 			!ENTRY_IS_NULL(i_layer);
+@@ -563,38 +551,41 @@ check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struc
+ 		// we should never need to go beyond the last layer
+ 		assert(layer_num < NLAYERS(p_chunk_rec));
+ 
+-		unsigned short thisbucket_size = i_layer->regular.mod >> 8;
+-		unsigned short modulus = i_layer->regular.mod & 0xff;
+-
+-		assert(modulus < (1u << p_chunk_rec->log_pitch));
+-		
+ 		if (IS_CONTINUATION_ENTRY(i_layer))
+ 		{
++			assert(i_layer->continuation.size_in_bucket != 0);
+ 			/* Check that the *previous* bucket contains the object start */
+ 			assert(get_start_from_continuation(i_layer, p_bucket, p_chunk_rec, container,
+ 					NULL, NULL, NULL));
+-		}
+-		
+-		/* Check we don't overlap with anything else in this bucket. */
+-		for (struct entry *i_earlier_layer = p_bucket;
+-			i_earlier_layer != i_layer;
+-			i_earlier_layer += ENTRIES_PER_LAYER(p_chunk_rec))
+-		{
+-			unsigned short thisbucket_earlier_size = i_earlier_layer->regular.mod >> 8;
+-			unsigned short earlier_modulus = i_earlier_layer->regular.mod & 0xff;
++		} else {
++			unsigned short modulus = i_layer->regular.mod & 0xff;
++			unsigned short thisbucket_size = i_layer->regular.mod >> 8; // ZMTODO REMOVE
+ 
+-			// note that either entry might be a continuation entry
+-			// ... in which case zero-size means "the whole bucket"
+-			assert(!(IS_CONTINUATION_ENTRY(i_earlier_layer) && thisbucket_earlier_size == 0));
+-			assert(!(IS_CONTINUATION_ENTRY(i_layer) && thisbucket_size == 0));
++			assert(modulus < (1u << p_chunk_rec->log_pitch));
+ 
+-			unsigned earlier_end = earlier_modulus + thisbucket_earlier_size;
+-			unsigned our_end = modulus + thisbucket_size;
+-			
+-			// conventional overlap
+-			assert(!(earlier_end > modulus && earlier_modulus < our_end));
+-			assert(!(our_end > earlier_modulus && modulus < earlier_end));
++			/* Check we don't overlap with anything else in this bucket. */
++			for (struct entry *i_earlier_layer = p_bucket;
++				i_earlier_layer != i_layer;
++				i_earlier_layer += ENTRIES_PER_LAYER(p_chunk_rec))
++			{
++
++				const unsigned our_end = modulus + thisbucket_size;
++
++				if(IS_CONTINUATION_ENTRY(i_earlier_layer))
++				{
++					assert(i_earlier_layer->continuation.size_in_bucket != 0);
++				} else {
++					const unsigned short thisbucket_earlier_size = i_earlier_layer->regular.mod >> 8;
++					const unsigned short earlier_modulus = i_earlier_layer->regular.mod & 0xff;
++					const unsigned earlier_end = earlier_modulus + thisbucket_earlier_size;
++
++					// conventional overlap
++					assert(!(earlier_end > modulus && earlier_modulus < our_end));
++					assert(!(our_end > earlier_modulus && modulus < earlier_end));
++				}				
++			}
+ 		}
++		
+ 	}
+ 
+ #endif
+@@ -620,6 +611,8 @@ static void delete_suballocated_chunk(struct chunk_rec *p_rec)
+ 			
+ 	/* We might want to restore the previous alloc_site bits in the higher-level 
+ 	 * chunk. But we assume that's been/being deleted, so we don't bother. */
++#else 
++	abort();
+ #endif
+ }
+ 
+-- 
+2.51.0
+
+
+From 94c8902426dc5889016fc4f52b344405e8aa1dd5 Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Tue, 30 Sep 2025 08:41:47 +0100
+Subject: [PATCH 05/10] wip
+
+---
+ include/malloc-meta.h | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/include/malloc-meta.h b/include/malloc-meta.h
+index 02bac95..75117cd 100644
+--- a/include/malloc-meta.h
++++ b/include/malloc-meta.h
+@@ -99,6 +99,12 @@ static inline struct insert *insert_for_chunk(void *userptr, sizefn_t *sizefn)
+ #define LIFETIME_POLICY_FLAG(id) (0x1 << (id))
+ #define IS_WITH_TYPE(ins) (ins->initial.unused != 0)
+ 
++/* By convention lifetime policy 0 is the manual deallocation policy */
++#define MANUAL_DEALLOCATION_POLICY 0
++#define MANUAL_DEALLOCATION_FLAG LIFETIME_POLICY_FLAG(MANUAL_DEALLOCATION_POLICY)
++/* Manual deallocation is not an "attached" policy */
++#define HAS_LIFETIME_POLICIES_ATTACHED(lti) ((lti) & ~(MANUAL_DEALLOCATION_FLAG))
++typedef struct insert lifetime_insert_t;
+ static inline lifetime_insert_t *lifetime_insert_for_chunk(void *userptr, sizefn_t *sizefn)
+ {
+ 	return (void*)0; /* FIXME: restore this */ /* &extended_insert_for_chunk(userptr, sizefn)->lifetime; */
+-- 
+2.51.0
+
+
+From dcb4d0f31e0aa6400d9871774e4b7260f0b2b100 Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Tue, 30 Sep 2025 09:04:20 +0100
+Subject: [PATCH 06/10] fix: insert fetchers
+
+---
+ include/malloc-meta.h   | 3 ++-
+ src/lifetime_policies.c | 5 +++--
+ tools/stubgen.h         | 2 +-
+ 3 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/include/malloc-meta.h b/include/malloc-meta.h
+index 75117cd..53ef927 100644
+--- a/include/malloc-meta.h
++++ b/include/malloc-meta.h
+@@ -107,7 +107,8 @@ static inline struct insert *insert_for_chunk(void *userptr, sizefn_t *sizefn)
+ typedef struct insert lifetime_insert_t;
+ static inline lifetime_insert_t *lifetime_insert_for_chunk(void *userptr, sizefn_t *sizefn)
+ {
+-	return (void*)0; /* FIXME: restore this */ /* &extended_insert_for_chunk(userptr, sizefn)->lifetime; */
++	return insert_for_chunk(userptr,sizefn);
++	//return (void*)0; /* FIXME: restore this */ /* &extended_insert_for_chunk(userptr, sizefn)->lifetime; */
+ }
+ #define INSERT_TYPE struct insert
+ 
+diff --git a/src/lifetime_policies.c b/src/lifetime_policies.c
+index c024956..6dbf26e 100644
+--- a/src/lifetime_policies.c
++++ b/src/lifetime_policies.c
+@@ -63,7 +63,8 @@ static inline INSERT_TYPE *get_lifetime_insert_info(const void *obj,
+ 	if (out_allocstart) *out_allocstart = allocstart;
+ 	if (out_free_fn) *out_free_fn = a->free;
+ 
+-	return lifetime_insert_for_chunk(allocstart);
++
++	return lifetime_insert_for_chunk(allocstart, a->get_size);
+ }
+ 
+ void __liballocs_attach_lifetime_policy(int policy_id, const void *obj)
+@@ -71,7 +72,7 @@ void __liballocs_attach_lifetime_policy(int policy_id, const void *obj)
+ 	assert(policy_id >= 0);
+ 
+ 	INSERT_TYPE *lti = get_lifetime_insert_info(obj, NULL, NULL);
+-	if (lti) *lti |= LIFETIME_POLICY_FLAG(policy_id); // ZMTODO
++	if (lti) lti->with_type.lifetime_policies |= LIFETIME_POLICY_FLAG(policy_id); // ZMTODO
+ }
+ 
+ void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
+diff --git a/tools/stubgen.h b/tools/stubgen.h
+index ee91b91..d48e270 100644
+--- a/tools/stubgen.h
++++ b/tools/stubgen.h
+@@ -355,7 +355,7 @@ ALLOC_EVENT(post_successful_alloc)(void *allocptr, size_t modified_size, size_t
+ 	if (initial_lifetime_policies) /* always statically known but we can't #ifdef here */ \
+ 	{ \
+ 		lifetime_insert_t *lti = lifetime_insert_for_chunk(allocptr /* == userptr */, sizefn); \
+-		if (lti) *lti |= initial_lifetime_policies; \
++		if (lti) lti->with_type.lifetime_policies |= initial_lifetime_policies; \
+ 		/* GitHub issue #21: make initial_lifetime_policies caller-sensitive somehow? */ \
+ 	} \
+ } \
+-- 
+2.51.0
+
+
+From d65dc42d48a6289de0e0e1a3c9e787dd837ba15d Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Tue, 30 Sep 2025 15:17:14 +0100
+Subject: [PATCH 07/10] fix: cerror
+
+---
+ src/allocators/generic_small.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/src/allocators/generic_small.c b/src/allocators/generic_small.c
+index 4aaa1a6..6d8bb23 100644
+--- a/src/allocators/generic_small.c
++++ b/src/allocators/generic_small.c
+@@ -300,7 +300,7 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
+ 	// we should never need to go beyond the last layer
+ 	assert(layer_num < NLAYERS(p_chunk_rec));
+ 	
+-	p_ent->regular.alloc_site = __current_allocsite;
++	p_ent->regular.alloc_site = (unsigned long) __current_allocsite;
+ 	
+ 	/* We also need to represent the object's size somehow. We choose to use 
+ 	 * continuation entries since the entry doesn't have enough bits.
+@@ -802,8 +802,7 @@ static liballocs_err_t get_info(void *obj, struct big_allocation *b,
+ 		++__liballocs_aborted_unindexed_heap;
+ 		return &__liballocs_err_unindexed_heap_object;
+ 	}
+-	
+-	return extract_and_output_alloc_site_and_type(heap_info, out_type, (void**) out_site);
++	return extract_and_output_alloc_site_and_type((struct insert *) heap_info, out_type, (void**) out_site); // HACK
+ }
+ 
+ struct allocator __generic_small_allocator = {
+-- 
+2.51.0
+
+
+From 4443d1d083367ec0486bd776d580604656215471 Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Thu, 2 Oct 2025 00:53:26 +0100
+Subject: [PATCH 08/10] wip
+
+---
+ include/generic_malloc_index.h | 14 +++++++-------
+ include/malloc-meta.h          |  3 +--
+ src/allocators/generic_small.c |  2 +-
+ src/allocators/ld-so-malloc.c  |  2 +-
+ src/lifetime_policies.c        |  4 ++--
+ 5 files changed, 12 insertions(+), 13 deletions(-)
+
+diff --git a/include/generic_malloc_index.h b/include/generic_malloc_index.h
+index 882d675..bef743f 100644
+--- a/include/generic_malloc_index.h
++++ b/include/generic_malloc_index.h
+@@ -714,7 +714,7 @@ liballocs_err_t __generic_malloc_set_type(struct allocator *a,
+ 		NULL, NULL, NULL, sizefn);
+ 	if (!ins) return &__liballocs_err_unindexed_heap_object;
+ 	ins->with_type.uniqtype_shifted = (uintptr_t) ( (unsigned long) new_type >> 4);
+-	ins->with_type.alloc_site_id = 1; // ZMTODO: ID
++	ins->with_type.alloc_site_id = 0; // TODO
+ 	return NULL;
+ }
+ 
+@@ -750,10 +750,10 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 			*out_site = NULL;
+ 		}
+ 		/* Clear the low-order bit, which is available as an extra flag 
+-			* bit. libcrunch uses this to track whether an object is "loose"
+-			* or not. Loose objects have approximate type info that might be 
+-			* "refined" later, typically e.g. from __PTR_void to __PTR_T.
+-			* FIXME: this should just be determined by abstractness of the type. */
++		* bit. libcrunch uses this to track whether an object is "loose"
++		* or not. Loose objects have approximate type info that might be 
++		* "refined" later, typically e.g. from __PTR_void to __PTR_T.
++		* FIXME: this should just be determined by abstractness of the type. */
+ 		alloc_uniqtype = (struct uniqtype *)((uintptr_t)(p_ins->with_type.uniqtype_shifted << 4) & ~0x1ul);
+ 
+ 	} else {
+@@ -778,7 +778,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		// it a dynamically-sized alloc with a uniqtype.
+ 		// This means we're the first query to rewrite the alloc site,
+ 		// and is the client's queue to go poking in the insert.
+-		p_ins->with_type.alloc_site_id = 1; // ZMTODO: ID
++		p_ins->with_type.alloc_site_id = 0; // HACK: Ideally, we would store the id here, but it isn't needed anywhere yet, so this is fine
+ 		p_ins->with_type.uniqtype_shifted = (uintptr_t) alloc_uniqtype >> 4 /* | 0x0ul */;
+ 		/* How do we get the id? Doing a binary search on the by-id spine is
+ 		 * okay because there will be very few of them. We don't want to do
+@@ -813,7 +813,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		if (p_ins)
+ 		{
+ 	#ifdef NDEBUG
+-			p_ins->with_type.alloc_site_id = 1; // ZMTODO: ID
++			p_ins->with_type.alloc_site_id = 0; // 
+ 			p_ins->with_type.uniqtype_shifted = 0;
+ 	#endif
+ 			assert(INSERT_DESCRIBES_OBJECT(p_ins));
+diff --git a/include/malloc-meta.h b/include/malloc-meta.h
+index 53ef927..063a697 100644
+--- a/include/malloc-meta.h
++++ b/include/malloc-meta.h
+@@ -80,7 +80,7 @@ typedef unsigned long /*size_t*/ sizefn_t(void*);
+ static inline struct insert *
+ insert_for_chunk_and_caller_usable_size(void *userptr, /*size_t*/ unsigned long caller_usable_size)
+ {
+-	/*uintptr_t*/ unsigned long long insertptr	
++	/*uintptr_t*/ unsigned long long insertptr
+ 	 = (unsigned long long)((char*) userptr + caller_usable_size);
+ 	return (struct insert *)insertptr;
+ }
+@@ -108,7 +108,6 @@ typedef struct insert lifetime_insert_t;
+ static inline lifetime_insert_t *lifetime_insert_for_chunk(void *userptr, sizefn_t *sizefn)
+ {
+ 	return insert_for_chunk(userptr,sizefn);
+-	//return (void*)0; /* FIXME: restore this */ /* &extended_insert_for_chunk(userptr, sizefn)->lifetime; */
+ }
+ #define INSERT_TYPE struct insert
+ 
+diff --git a/src/allocators/generic_small.c b/src/allocators/generic_small.c
+index 6d8bb23..21b9997 100644
+--- a/src/allocators/generic_small.c
++++ b/src/allocators/generic_small.c
+@@ -559,7 +559,7 @@ check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struc
+ 					NULL, NULL, NULL));
+ 		} else {
+ 			unsigned short modulus = i_layer->regular.mod & 0xff;
+-			unsigned short thisbucket_size = i_layer->regular.mod >> 8; // ZMTODO REMOVE
++			unsigned short thisbucket_size = i_layer->regular.mod >> 8;
+ 
+ 			assert(modulus < (1u << p_chunk_rec->log_pitch));
+ 
+diff --git a/src/allocators/ld-so-malloc.c b/src/allocators/ld-so-malloc.c
+index c50e2b1..c19dd17 100644
+--- a/src/allocators/ld-so-malloc.c
++++ b/src/allocators/ld-so-malloc.c
+@@ -102,7 +102,7 @@ static struct liballocs_err *linear_malloc_get_info(
+ 			found->addr, found->caller_requested_size + found->padding_to_caller_usable_size); // FIXME: wrong size here?
+ 		if (out_base) *out_base = found->addr;
+ 		if (out_size) *out_size = found->caller_requested_size;
+-		if (out_type && IS_WITH_TYPE(heap_info)) *out_type = (struct uniqtype *) (heap_info->with_type.uniqtype_shifted << 4); //ZMTODO: do we need to shift here?
++		if (out_type && IS_WITH_TYPE(heap_info)) *out_type = (struct uniqtype *) (heap_info->with_type.uniqtype_shifted << 4);
+ 		if (out_site && !IS_WITH_TYPE(heap_info)) *out_site = (void*) (uintptr_t) heap_info->initial.alloc_site;
+ 		return NULL;
+ 	}
+diff --git a/src/lifetime_policies.c b/src/lifetime_policies.c
+index 6dbf26e..53a8cd4 100644
+--- a/src/lifetime_policies.c
++++ b/src/lifetime_policies.c
+@@ -72,7 +72,7 @@ void __liballocs_attach_lifetime_policy(int policy_id, const void *obj)
+ 	assert(policy_id >= 0);
+ 
+ 	INSERT_TYPE *lti = get_lifetime_insert_info(obj, NULL, NULL);
+-	if (lti) lti->with_type.lifetime_policies |= LIFETIME_POLICY_FLAG(policy_id); // ZMTODO
++	if (lti) lti->with_type.lifetime_policies |= LIFETIME_POLICY_FLAG(policy_id);
+ }
+ 
+ void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
+@@ -85,7 +85,7 @@ void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
+ 	if (lti)
+ 	{
+ 		lti->with_type.lifetime_policies &= ~LIFETIME_POLICY_FLAG(policy_id);
+-		if (!*lti) free_fn((struct allocated_chunk *) allocstart); //ZMTODO
++		if (!lti->with_type.lifetime_policies) free_fn((struct allocated_chunk *) allocstart);
+ 	}
+ }
+ 
+-- 
+2.51.0
+
+
+From ad0edbd3974e15d50bf1bc91f0476deaf5b399f5 Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Thu, 2 Oct 2025 01:36:55 +0100
+Subject: [PATCH 09/10] wip
+
+---
+ include/generic_malloc_index.h | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/include/generic_malloc_index.h b/include/generic_malloc_index.h
+index bef743f..4a4668e 100644
+--- a/include/generic_malloc_index.h
++++ b/include/generic_malloc_index.h
+@@ -714,7 +714,7 @@ liballocs_err_t __generic_malloc_set_type(struct allocator *a,
+ 		NULL, NULL, NULL, sizefn);
+ 	if (!ins) return &__liballocs_err_unindexed_heap_object;
+ 	ins->with_type.uniqtype_shifted = (uintptr_t) ( (unsigned long) new_type >> 4);
+-	ins->with_type.alloc_site_id = 0; // TODO
++	ins->with_type.alloc_site_id = 1; // TODO
+ 	return NULL;
+ }
+ 
+@@ -778,7 +778,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		// it a dynamically-sized alloc with a uniqtype.
+ 		// This means we're the first query to rewrite the alloc site,
+ 		// and is the client's queue to go poking in the insert.
+-		p_ins->with_type.alloc_site_id = 0; // HACK: Ideally, we would store the id here, but it isn't needed anywhere yet, so this is fine
++		p_ins->with_type.alloc_site_id = 1; // HACK: Ideally, we would store the id here, but it isn't needed anywhere yet, so this is fine
+ 		p_ins->with_type.uniqtype_shifted = (uintptr_t) alloc_uniqtype >> 4 /* | 0x0ul */;
+ 		/* How do we get the id? Doing a binary search on the by-id spine is
+ 		 * okay because there will be very few of them. We don't want to do
+@@ -813,7 +813,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		if (p_ins)
+ 		{
+ 	#ifdef NDEBUG
+-			p_ins->with_type.alloc_site_id = 0; // 
++			p_ins->with_type.alloc_site_id = 1; // 
+ 			p_ins->with_type.uniqtype_shifted = 0;
+ 	#endif
+ 			assert(INSERT_DESCRIBES_OBJECT(p_ins));
+-- 
+2.51.0
+
+
+From c1a948bead41b63a2c475d03780909e507bc62d8 Mon Sep 17 00:00:00 2001
+From: difcsi <zoltan.m@tuta.io>
+Date: Tue, 14 Oct 2025 12:05:39 +0100
+Subject: [PATCH 10/10] test
+
+---
+ include/generic_malloc_index.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/generic_malloc_index.h b/include/generic_malloc_index.h
+index 4a4668e..7cbc4cd 100644
+--- a/include/generic_malloc_index.h
++++ b/include/generic_malloc_index.h
+@@ -770,7 +770,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
+ 		{
+ 			__liballocs_addrlist_add(&__liballocs_unrecognised_heap_alloc_sites, alloc_site);
+ 		}
+-#if 1
++#ifdef NDEBUG
+ 		// install it for future lookups
+ 		// FIXME: make this atomic using a union
+ 		// Is this in a loose state? NO. We always make it strict.
+-- 
+2.51.0
+
