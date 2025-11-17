@@ -19,13 +19,13 @@ struct entry {
 	union {
 		struct {
 			unsigned long discr:48; /* zero? null; small? continuation; non-small lower-half? regular_initial; non-small upper-half? regular with type */
-			unsigned modulus:8; /* offset into the bucket of obj start (zero for continuations) */
+			unsigned bucket_offset:8; /* offset into the bucket of obj start (zero for continuations) */
 			unsigned thisbucket_size:8;
 		} common;
 		struct{
 			unsigned long alloc_site:47; /* never zero, never small */
 			unsigned always_zero:1;
-			unsigned modulus:8;         /* obj start displacement from bucket start; may be zero */
+			unsigned bucket_offset:8;         /* obj start displacement from bucket start; may be zero */
 			unsigned thisbucket_size:8;
 		} regular_initial;
 		struct{
@@ -38,7 +38,7 @@ struct entry {
 			unsigned always_one:1;
 			/* The above fields constitute a 48-bit unsigned integer whose value is always
 			 * in the top half of the range, because of the always_one MSB. */
-			unsigned modulus:8; /* may be zero */
+			unsigned bucket_offset:8; /* may be zero */
 			unsigned thisbucket_size:8;
 		} regular_with_type;
 		struct{
@@ -55,7 +55,7 @@ struct entry {
 	((entry)->common.discr != 0 && (entry)->common.discr < MINIMUM_USER_ADDRESS)
 
 #define ENTRY_IS_NULL(entry) ((entry)->common.discr == 0)
-#define ENTRY_GET_STORED_OFFSET(entry) ((entry)->common.modulus)
+#define ENTRY_GET_STORED_OFFSET(entry) ((entry)->common.bucket_offset)
 #define ENTRY_GET_THISBUCKET_SIZE(entry) ((entry)->common.thisbucket_size)
 
 #ifndef NO_PTHREADS
@@ -135,7 +135,7 @@ uintptr_t memrect_nbucket_of(void *addr, void *table_coverage_start_addr, unsign
 }
 
 static inline
-uintptr_t memrect_modulus_of_addr(void *addr, void *table_coverage_start_addr, unsigned char log_bucket_pitch)
+uintptr_t memrect_bucket_offset_of_addr(void *addr, void *table_coverage_start_addr, unsigned char log_bucket_pitch)
 {
 	return ((uintptr_t) addr - (uintptr_t) table_coverage_start_addr) % (1ul<<log_bucket_pitch);
 }
@@ -289,9 +289,9 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 #else
 	char *end_addr = (char*) ptr + size_bytes;
 	
-	/* Recall: modulus is the offset of ptr from the start of the memory range
+	/* Recall: bucket offset is the offset of ptr from the start of the memory range
 	 * covered by its metadata bucket. */
-	unsigned short modulus = memrect_modulus_of_addr(ptr, container->begin, p_chunk_rec->log_pitch);
+	unsigned short bucket_offset = memrect_bucket_offset_of_addr(ptr, container->begin, p_chunk_rec->log_pitch);
 	
 	/* Get the relevant bucket. */
 	unsigned long bucket_num = memrect_nbucket_of(ptr, container->begin, p_chunk_rec->log_pitch);
@@ -318,14 +318,14 @@ static int index_small_alloc_internal(void *ptr, unsigned size_bytes,
 	 */
 	unsigned short thisbucket_size = (memrect_nbucket_of(end_addr, container->begin, p_chunk_rec->log_pitch) == bucket_num) 
 			? size_bytes
-			: (1u << p_chunk_rec->log_pitch) - modulus;
+			: (1u << p_chunk_rec->log_pitch) - bucket_offset;
 	assert(thisbucket_size != 0);
 	assert(thisbucket_size <= (1u << p_chunk_rec->log_pitch));
 	
 
 	*p_ent = (struct entry) { .regular_initial = {
 		.alloc_site = (unsigned long) __current_allocsite,
-		.modulus = modulus,
+		.bucket_offset = bucket_offset,
 		.thisbucket_size = thisbucket_size
 	} };
 	
@@ -395,7 +395,7 @@ static void unindex_all_overlapping(void *unindex_start, void *unindex_end,
 			container, p_old_ent);
 	}
 	
-	unsigned short modulus = memrect_modulus_of_addr(unindex_start, container->begin, p_chunk_rec->log_pitch);
+	unsigned short bucket_offset = memrect_bucket_offset_of_addr(unindex_start, container->begin, p_chunk_rec->log_pitch);
 	// 1. now any object that overlaps us must start later than us, walk up the buckets
 	for (struct entry *p_search_bucket = p_bucket;
 			// we might find an object overlapping that starts in this bucket if 
@@ -518,28 +518,27 @@ get_start_from_continuation(struct entry *p_ent, struct entry *p_bucket,
 	// okay: hop back to the object start
 	struct entry *p_object_start_bucket = p_bucket - 1;
 
-	// walk the object start bucket looking for the *last* object i.e. biggest modulus
+	// walk the object start bucket looking for the *last* object i.e. biggest bucket offset
 	struct entry *object_ent;
-	struct entry *biggest_modulus_pos = NULL;
+	struct entry *biggest_bucket_offset_pos = NULL;
 	for (struct entry *i_layer = p_object_start_bucket;
 			!ENTRY_IS_NULL(i_layer);
 			i_layer += ENTRIES_PER_LAYER(p_chunk_rec))
 	{
 		if (ENTRY_IS_CONTINUATION(i_layer)) continue;
-		// the modulus tells us where this object starts in the bucket range
-		unsigned short modulus = p_object_start_bucket->common.modulus;
-		// FIXME: rename "modulus" to "bucket offset" globally within this file
-		if (!biggest_modulus_pos || 
-				ENTRY_GET_STORED_OFFSET(i_layer) > ENTRY_GET_STORED_OFFSET(biggest_modulus_pos))
+		// the offset tells us where this object starts in the bucket range
+		unsigned short bucket_offset = p_object_start_bucket->common.bucket_offset;
+		if (!biggest_bucket_offset_pos || 
+				ENTRY_GET_STORED_OFFSET(i_layer) > ENTRY_GET_STORED_OFFSET(biggest_bucket_offset_pos))
 		{
-			biggest_modulus_pos = i_layer;
+			biggest_bucket_offset_pos = i_layer;
 		}
 	}
 	// we must have seen the last object
-	assert(biggest_modulus_pos);
-	object_ent = biggest_modulus_pos;
+	assert(biggest_bucket_offset_pos);
+	object_ent = biggest_bucket_offset_pos;
 	char *object_start = (char*)(BUCKET_RANGE_BASE(p_object_start_bucket, p_chunk_rec, container->begin)) 
-			+ ENTRY_GET_STORED_OFFSET(biggest_modulus_pos);
+			+ ENTRY_GET_STORED_OFFSET(biggest_bucket_offset_pos);
 	uintptr_t object_size = p_ent->continuation.size;
 
 	if (out_object_start) *out_object_start = object_start;
@@ -569,10 +568,10 @@ check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struc
 			assert(get_start_from_continuation(i_layer, p_bucket, p_chunk_rec, container,
 					NULL, NULL, NULL));
 		} else {
-			unsigned short modulus = i_layer->common.modulus;
+			unsigned short bucket_offset = i_layer->common.bucket_offset;
 			unsigned short thisbucket_size = i_layer->common.thisbucket_size;
 
-			assert(modulus < (1u << p_chunk_rec->log_pitch));
+			assert(bucket_offset < (1u << p_chunk_rec->log_pitch));
 
 			/* Check we don't overlap with anything else in this bucket. */
 			for (struct entry *i_earlier_layer = p_bucket;
@@ -580,19 +579,19 @@ check_bucket_sanity(struct entry *p_bucket, struct chunk_rec *p_chunk_rec, struc
 				i_earlier_layer += ENTRIES_PER_LAYER(p_chunk_rec))
 			{
 
-				const unsigned our_end = modulus + thisbucket_size;
+				const unsigned our_end = bucket_offset + thisbucket_size;
 
 				if(ENTRY_IS_CONTINUATION(i_earlier_layer))
 				{
 					assert(i_earlier_layer->continuation.thisbucket_size != 0);
 				} else {
 					const unsigned short thisbucket_earlier_size = i_earlier_layer->common.thisbucket_size;
-					const unsigned short earlier_modulus = i_earlier_layer->common.modulus;
-					const unsigned earlier_end = earlier_modulus + thisbucket_earlier_size;
+					const unsigned short earlier_bucket_offset = i_earlier_layer->common.bucket_offset;
+					const unsigned earlier_end = earlier_bucket_offset + thisbucket_earlier_size;
 
 					// conventional overlap
-					assert(!(earlier_end > modulus && earlier_modulus < our_end));
-					assert(!(our_end > earlier_modulus && modulus < earlier_end));
+					assert(!(earlier_end > bucket_offset && earlier_bucket_offset < our_end));
+					assert(!(our_end > earlier_bucket_offset && bucket_offset < earlier_end));
 				}				
 			}
 		}
@@ -690,9 +689,9 @@ struct entry *lookup_small_alloc(const void *ptr,
 			else 
 			{
 				/* It's an object start entry. Does it overlap? */
-				unsigned modulus = p_ent->common.modulus;
+				unsigned bucket_offset = p_ent->common.bucket_offset;
 				unsigned short object_size_in_this_bucket = p_ent->common.thisbucket_size;
-				char *object_start_addr = thisbucket_base_addr + modulus;
+				char *object_start_addr = thisbucket_base_addr + bucket_offset;
 				void *object_end_addr = object_start_addr + object_size_in_this_bucket;
 
 				if ((char*) object_start_addr <= (char*) ptr && (char*) object_end_addr > (char*) ptr)
@@ -747,21 +746,21 @@ static void unindex_small_alloc_internal_with_ent(void *ptr, struct chunk_rec *p
 	struct entry *p_bucket = BUCKET_PTR_FROM_ENTRY_PTR(p_ent, p_chunk_rec, container);
 	check_bucket_sanity(p_bucket, p_chunk_rec, container);
 	
-	unsigned short our_modulus = ENTRY_GET_STORED_OFFSET(p_ent);
-	_Bool we_are_biggest_modulus = 1;
+	unsigned short our_bucket_offset = ENTRY_GET_STORED_OFFSET(p_ent);
+	_Bool we_are_biggest_offset = 1;
 	for (struct entry *i_layer = p_bucket;
-			we_are_biggest_modulus && !ENTRY_IS_NULL(i_layer);
+			we_are_biggest_offset && !ENTRY_IS_NULL(i_layer);
 			i_layer += ENTRIES_PER_LAYER(p_chunk_rec))
 	{
-		we_are_biggest_modulus &= (our_modulus >= ENTRY_GET_STORED_OFFSET(i_layer));
+		we_are_biggest_offset &= (our_bucket_offset >= ENTRY_GET_STORED_OFFSET(i_layer));
 	}
 	
 	/* Delete this entry and "shift left" any later in the bucket. */
 	remove_one_entry(p_ent, p_bucket, p_chunk_rec);
 	check_bucket_sanity(p_bucket, p_chunk_rec, container);
 	
-	/* If we were the biggest modulus, delete any continuation entry in the next bucket. */
-	if (we_are_biggest_modulus)
+	/* If we were the biggest offset, delete any continuation entry in the next bucket. */
+	if (we_are_biggest_offset)
 	{
 		for (struct entry *i_layer = p_bucket + 1;
 				!ENTRY_IS_NULL(i_layer);
