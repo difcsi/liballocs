@@ -51,6 +51,13 @@ struct entry {
 } __attribute((packed));
 
 
+#define ENTRY_IS_CONTINUATION(entry) \
+	((entry)->common.discr != 0 && (entry)->common.discr < MINIMUM_USER_ADDRESS)
+
+#define ENTRY_IS_NULL(entry) ((entry)->common.discr == 0)
+#define ENTRY_GET_STORED_OFFSET(entry) ((entry)->common.modulus)
+#define ENTRY_GET_THISBUCKET_SIZE(entry) ((entry)->common.thisbucket_size)
+
 #ifndef NO_PTHREADS
 #define THE_MUTEX &mutex
 /* We're recursive only because assertion failures sometimes want to do 
@@ -154,7 +161,7 @@ memrect_bucket_range_base(void *bucket, void *rect_base, void *table_coverage_st
 	 (p_chunk_rec)->log_pitch))
 #define NLAYERS(p_chunk_rec) (1ul<<(p_chunk_rec)->log_pitch)
 
-#define LOG_ENTRY_SIZE 3 /* entry size is 8 */
+#define LOG_ENTRY_SIZE 3 /* entry size is 8; FIXME: static-assert 1<<this equals sizeof (struct entry) */
 
 #define BUCKET_RANGE_BASE(p_bucket, p_chunk_rec, coverage_start) \
 	(memrect_bucket_range_base((p_bucket), (p_chunk_rec)->metadata_recs, \
@@ -165,15 +172,6 @@ memrect_bucket_range_base(void *bucket, void *rect_base, void *table_coverage_st
 #define BUCKET_PTR_FROM_ENTRY_PTR(p_ent, p_chunk_rec, container) \
 	((p_chunk_rec)->metadata_recs + (((p_ent) - (p_chunk_rec)->metadata_recs) % \
 	memrect_entries_per_layer((p_chunk_rec)->power_of_two_size, (p_chunk_rec)->log_pitch)))
-
-
-
-#define ENTRY_IS_CONTINUATION(entry) \
-	((entry)->common.discr != 0 && (entry)->common.discr < MINIMUM_USER_ADDRESS)
-
-#define ENTRY_IS_NULL(entry) ((entry)->common.discr == 0)
-#define ENTRY_GET_STORED_OFFSET(entry) ((entry)->common.modulus)
-#define ENTRY_GET_THISBUCKET_SIZE(entry) ((entry)->common.thisbucket_size)
 
 static
 struct entry *lookup_small_alloc(const void *ptr, 
@@ -530,6 +528,7 @@ get_start_from_continuation(struct entry *p_ent, struct entry *p_bucket,
 		if (ENTRY_IS_CONTINUATION(i_layer)) continue;
 		// the modulus tells us where this object starts in the bucket range
 		unsigned short modulus = p_object_start_bucket->common.modulus;
+		// FIXME: rename "modulus" to "bucket offset" globally within this file
 		if (!biggest_modulus_pos || 
 				ENTRY_GET_STORED_OFFSET(i_layer) > ENTRY_GET_STORED_OFFSET(biggest_modulus_pos))
 		{
@@ -807,14 +806,51 @@ static liballocs_err_t get_info(void *obj, struct big_allocation *b,
 		? BIDX(b->parent)
 		 : __lookup_deepest_bigalloc(obj);
 	
-	struct entry *heap_info = lookup_small_alloc(obj, container->suballocator_private,
+	struct entry *p_ent = lookup_small_alloc(obj, container->suballocator_private,
 		container, out_base, out_size);
-	if (!heap_info)
+	if (!p_ent)
 	{
 		++__liballocs_aborted_unindexed_heap;
 		return &__liballocs_err_unindexed_heap_object;
 	}
-	return extract_and_output_alloc_site_and_type((struct insert *) heap_info, out_type, (void**) out_site); // HACK
+	struct uniqtype *alloc_uniqtype = NULL;
+	/* Now we have a uniqtype or an allocsite. For long-lived objects 
+	 * the uniqtype will have been installed in the heap header already.
+	 * This is the expected case. */
+	assert(p_ent->common.discr != 0); // null entry -- we should not be passed these
+	assert(p_ent->common.discr >= MINIMUM_USER_ADDRESS); // continuation entry -- ditto
+	if (p_ent->common.discr < (1ull << (ADDR_BITSIZE - 1))) // 'regular initial' entry
+	{
+		void *alloc_site = (void*)(unsigned long) p_ent->regular_initial.alloc_site;
+		if (out_site) *out_site = alloc_site;
+		if (out_type)
+		{
+			struct allocsite_entry *entry = __liballocs_find_allocsite_entry_at(alloc_site);
+			alloc_uniqtype = entry ? entry->uniqtype : NULL;
+			/* Remember the unrecog'd alloc sites we see. */
+			if (!alloc_uniqtype && alloc_site && 
+					!__liballocs_addrlist_contains(&__liballocs_unrecognised_heap_alloc_sites, alloc_site))
+			{
+				__liballocs_addrlist_add(&__liballocs_unrecognised_heap_alloc_sites, alloc_site);
+			}
+			*out_type = alloc_uniqtype;
+		}
+	}
+	else // 'regular with type' entry
+	{
+		assert(0); // currently we never progress to the with_type state
+	}
+	// FIXME: same optimizations as generic_malloc (use thewith_type state, and in
+	// non-debug builds, zero out unrecognised alloc sites after the first failing lookup)
+
+	// if we didn't get an alloc uniqtype, record the abort we abort
+	if (out_type && !alloc_uniqtype) 
+	{
+		++__liballocs_aborted_unrecognised_allocsite;
+		return &__liballocs_err_unrecognised_alloc_site;;
+	}
+	/* return success */
+	return NULL;
 }
 
 struct allocator __generic_small_allocator = {
