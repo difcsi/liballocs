@@ -42,13 +42,17 @@
 /* Inserts describing objects have user addresses */
 #define INSERT_DESCRIBES_OBJECT(ins) \
 	(ins->with_type.alloc_site_id || (char*)((uintptr_t)((unsigned long long)(ins->initial.alloc_site))) >= MINIMUM_USER_ADDRESS)
-#define INSERT_IS_NULL(p_ins) (!IS_WITH_TYPE(p_ins) && p_ins->initial.alloc_site == 0)
+#define INSERT_IS_NULL(p_ins) (!INSERT_IS_WITH_TYPE(p_ins) && p_ins->initial.alloc_site == 0)
 
 /* What's the most space that a malloc insert will use?
  * We use this figure to guess when an alloc has been satisfied with mmap().
  * Making it too big hurts performance but not correctness. */
 #define MAXIMUM_MALLOC_HEADER_OVERHEAD 16
 
+
+#if LIFETIME_POLICIES > 4
+#error "Variable size lifetime policies not fully supported yet"
+#endif
 
 struct insert {
 	union {
@@ -57,14 +61,10 @@ struct insert {
 			unsigned long alloc_site:48;
 		} initial;
 		struct insert_with_type {
-			unsigned alloc_site_id:16; /* Never Zero; -1 means "no/unknown alloc site" */
-			unsigned long uniqtype_shifted:44;  /* uniqtype ptrs are 8-byte aligned => and have top bit 0 this field is ((unsigned long) u)>>4 */
-#if LIFETIME_POLICIES > 4
-		#error "Variable size lifetime policies not fully supported yet"
-		unsigned lifetime_policies:LIFETIME_POLICIES; /* TODO: Alignment needed instead of packed in this case */
-#else
-		unsigned lifetime_policies:4; // should never be zero 0000 should be that it is freed when and only when parent is freed.
-#endif
+			unsigned alloc_site_id:15; /* may be zero; -1 means "no/unknown alloc site" */
+			unsigned always_1:1;
+			unsigned long uniqtype_shifted:44;  /* uniqtype ptrs are 8-byte aligned => and have top bit 0 => this field is ((unsigned long) u)>>3 */
+			unsigned lifetime_policies:4; // should never be zero 0000 should be that it is freed when and only when parent is freed.
 		} with_type;
 	};
 } __attribute((packed));
@@ -100,7 +100,7 @@ static inline struct insert *insert_for_chunk(void *userptr, sizefn_t *sizefn)
 
 
 #define LIFETIME_POLICY_FLAG(id) (0x1 << (id))
-#define IS_WITH_TYPE(ins) (ins->initial.unused != 0)
+#define INSERT_IS_WITH_TYPE(ins) (ins->initial.unused != 0)
 
 /* By convention lifetime policy 0 is the manual deallocation policy */
 #define MANUAL_DEALLOCATION_POLICY 0

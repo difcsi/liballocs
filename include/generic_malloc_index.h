@@ -711,8 +711,14 @@ liballocs_err_t __generic_malloc_set_type(struct allocator *a,
 	struct insert *ins = lookup_object_info(arena_for_userptr(a, obj), obj,
 		NULL, NULL, NULL, sizefn);
 	if (!ins) return &__liballocs_err_unindexed_heap_object;
-	ins->with_type.uniqtype_shifted = UNIQTYPE_SHIFT_FOR_INSERT(new_type);
-	ins->with_type.alloc_site_id = 1; // TODO
+	unsigned existing_alloc_site_id = INSERT_IS_WITH_TYPE(ins)
+		? ins->with_type.alloc_site_id
+		: __liballocs_allocsite_id((void*)(unsigned long) ins->initial.alloc_site);
+	*ins = (struct insert) { .with_type = {
+		.uniqtype_shifted = UNIQTYPE_SHIFT_FOR_INSERT(new_type),
+		.always_1 = 1,
+		.alloc_site_id = existing_alloc_site_id
+	} };
 	return NULL;
 }
 
@@ -734,7 +740,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 	 * This is the expected case.
 	 */
 	struct uniqtype *alloc_uniqtype;
-	if (__builtin_expect(IS_WITH_TYPE(p_ins), 1)){
+	if (__builtin_expect(INSERT_IS_WITH_TYPE(p_ins), 1)){
 		
 		if (out_site)
 		{
@@ -758,7 +764,7 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 	} else {
 		/* Look up the allocsite's uniqtype, and install it in the heap info 
 		 * (on NDEBUG builds only, because it reduces debuggability a bit). */
-		void *alloc_site = (void*) p_ins->initial.alloc_site;
+		void *alloc_site = (void*)(unsigned long) p_ins->initial.alloc_site;
 		if (out_site) *out_site = alloc_site;
 		struct allocsite_entry *entry = __liballocs_find_allocsite_entry_at(alloc_site);
 		alloc_uniqtype = entry ? entry->uniqtype : NULL;
@@ -776,27 +782,17 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		// it a dynamically-sized alloc with a uniqtype.
 		// This means we're the first query to rewrite the alloc site,
 		// and is the client's queue to go poking in the insert.
-		p_ins->with_type.alloc_site_id = 1; // HACK: Ideally, we would store the id here, but it isn't needed anywhere yet, so this is fine
-		p_ins->with_type.uniqtype_shifted = (uintptr_t) alloc_uniqtype >> 4 /* | 0x0ul */;
 		/* How do we get the id? Doing a binary search on the by-id spine is
 		 * okay because there will be very few of them. We don't want to do
 		 * a binary search on the table proper. But that's okay. We get
 		 * everything we need. */
-		allocsite_id_t allocsite_id = __liballocs_allocsite_id((const void *) p_ins->initial.alloc_site);
-		p_ins->with_type.uniqtype_shifted = 0; /* temporary, to help races be benign */
-		/* Now we are changing which member of the union is active, to 'with_type', so
-		 * we have to have something non-zero in the alloc_site_id field. */
-
-		if (allocsite_id != (allocsite_id_t) -1)
-		{
-			// what to do with the id?? We have no spare bits...
-			// we could scrounge a few but certainly not 16 of them.
-			// When we're using a bitmap, we will have the space.
-			p_ins->with_type.alloc_site_id = allocsite_id; // HACK: Ideally, we would store the id here, but it isn't needed anywhere yet, so this is fine
-		} // else ins->with_type.alloc_site_id = -1; // <-- this is probably OK?
-		else assert(0 && "could not get/generate allocsite ID?");
-		p_ins->with_type.uniqtype_shifted = UNIQTYPE_SHIFT_FOR_INSERT(alloc_uniqtype);
-		
+		allocsite_id_t allocsite_id = __liballocs_allocsite_id(alloc_site);
+		*p_ins = (struct insert) { .with_type = {
+			.uniqtype_shifted = UNIQTYPE_SHIFT_FOR_INSERT(alloc_uniqtype),
+			.alloc_site_id = allocsite_id, /* note: zero is a valid ID; -1 means unknown */
+			.always_1 = 1,
+			/* lifetime policies are implicitly zeroed */
+		} };
 #endif
 	}
 	// if we didn't get an alloc uniqtype, we abort
@@ -812,14 +808,14 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		 * In cases where heap classification failed, we null out the allocsite 
 		 * to avoid repeated searching. We only do this for non-debug
 		 * builds because it makes debugging a bit harder.
-		 * NOTE that we don't want the insert to look like a deep-index
-		 * terminator, so we set the flag.
 		 */
 		if (p_ins)
 		{
 	#ifdef NDEBUG
-			p_ins->with_type.alloc_site_id = 1; // 
-			p_ins->with_type.uniqtype_shifted = 0;
+			*p_ins = (struct insert) { .initial = {
+				.alloc_site = 0U,
+				.unused = 0U
+			} };
 	#endif
 			assert(INSERT_DESCRIBES_OBJECT(p_ins));
 			assert(!INSERT_IS_NULL(p_ins));
