@@ -38,7 +38,7 @@ jobs:
           command: |
             . contrib/env.sh
             ./autogen.sh
-            ./configure
+            ./configure --enable-lifetime-policies
             make -j 2
       #- run: # now our glibc is built with DWARF 5, so don't do this
       #    name: Create liballocs metadata

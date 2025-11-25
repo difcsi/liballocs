@@ -96,7 +96,7 @@ void __notify_ptr_write(const void **dest, const void *val)
 	const void *old_val = *dest;
 	const void *old_allocstart;
 	INSERT_TYPE *old_lti = get_lifetime_insert_info(old_val, &old_allocstart, NULL);
-	if (old_lti && HAS_LIFETIME_POLICIES_ATTACHED(*old_lti))
+	if (old_lti && HAS_LIFETIME_POLICIES_ATTACHED(old_lti->with_type.lifetime_policies))
 	{
 		// Must be saved on stack to prevent use after free of old_lti
 		INSERT_TYPE policies_attached = *old_lti;
@@ -104,21 +104,38 @@ void __notify_ptr_write(const void **dest, const void *val)
 		{
 			if (policies_attached.with_type.lifetime_policies & LIFETIME_POLICY_FLAG(i))
 			{
-				// old_allocstart destination cannot have been freed if we are here
-				__lifetime_policies[i].delref(old_allocstart, dest);
+				switch (__lifetime_policies[i].type)
+				{
+					case LIFETIME_POLICY_GC:
+						// old_allocstart destination cannot have been freed if we are here
+						__lifetime_policies[i].policy.gc.delref(old_allocstart, dest);		
+						break;
+					
+					default:
+						abort(); // Unknown policy type
+						break;
+				}
+				
 			}
 		}
 	}
 
 	const void *new_allocstart;
 	INSERT_TYPE *new_lti = get_lifetime_insert_info(val, &new_allocstart, NULL);
-	if (new_lti && HAS_LIFETIME_POLICIES_ATTACHED(*new_lti))
+	if (new_lti && HAS_LIFETIME_POLICIES_ATTACHED(new_lti->with_type.lifetime_policies))
 	{
 		for (unsigned i = 1; i < LIFETIME_POLICIES; ++i)
 		{
 			if (new_lti->with_type.lifetime_policies & LIFETIME_POLICY_FLAG(i))
 			{
-				__lifetime_policies[i].addref(new_allocstart, dest);
+				switch(__lifetime_policies[i].type)
+				{
+					case LIFETIME_POLICY_GC:
+						__lifetime_policies[i].policy.gc.addref(new_allocstart, dest);
+						break;
+					default: 
+						abort(); // Unknown policy type
+				}
 			}
 		}
 	}
