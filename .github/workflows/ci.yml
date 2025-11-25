@@ -47,7 +47,7 @@ jobs:
         run: |
           . contrib/env.sh
           ./autogen.sh
-          ./configure
+          ./configure --enable-lifetime-policies
           make -j $(nproc)
       
       - name: Run tests
