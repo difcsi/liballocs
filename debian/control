@@ -1,0 +1,51 @@
+Source: liballocs
+Section: libs
+Priority: optional
+Maintainer: Zoltan Meszaros <zoltan.meszaros@kcl.ac.uk>
+Rules-Requires-Root: no
+Build-Depends:
+ debhelper-compat (= 12),
+ build-essential,
+ g++,
+ autoconf,
+ autoconf-archive,
+ automake,
+ libtool,
+ libltdl-dev,
+ m4,
+ ca-certificates,
+ wget,
+ default-jdk-headless,
+ pkg-config,
+ libelf-dev,
+ python3,
+ git,
+ gawk,
+ python3-distutils,
+ libunwind-dev,
+ ocaml,
+ ocamlbuild,
+ ocaml-findlib,
+ libfindlib-ocaml-dev,
+ libnum-ocaml-dev,
+ libdw-dev,
+ binutils-dev,
+ libffi-dev,
+ libboost-iostreams-dev,
+ libboost-regex-dev,
+ libboost-serialization-dev,
+ libboost-filesystem-dev,
+Standards-Version: 4.7.0
+Homepage: https://github.com/stephenrkell/liballocs
+Vcs-Browser: https://salsa.debian.org/debian/liballocs
+Vcs-Git: https://salsa.debian.org/debian/liballocs.git
+
+Package: liballocs-dev
+Section: libdevel
+Architecture: amd64
+Multi-Arch: no
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+Description: <insert up to 60 chars description>
+ <Insert long description, indented with spaces.>

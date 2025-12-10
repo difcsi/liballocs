@@ -1,0 +1,34 @@
+name: Build Debian package
+
+on:
+  push:
+    branches:
+      - debian
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Debian packaging dependencies
+        run: |
+          sudo add-apt-repository universe -y
+          sudo apt-get update
+          sudo apt-get install -y debhelper dpkg-dev devscripts equivs sbuild ubuntu-dev-tools
+      - name: Create upstream tarball
+        run: |
+          VERSION=0.1.0
+          tar --exclude-vcs --exclude=debian --exclude=.git -czf ../liballocs_${VERSION}.orig.tar.gz .
+      - name: Build Debian package
+        run: sbuild
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-source-package
+          path: |
+            ../*.dsc
+            ../*.debian.tar.*
+            ../*.orig.tar.*
+          retention-days: 7

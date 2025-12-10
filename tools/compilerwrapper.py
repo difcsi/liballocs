@@ -3,7 +3,7 @@
 # Always compiles via .o, even if the user is asking to link as well.
 # Also supports fixing up output .o files e.g. to support symbol interposition.
 
-import os, sys, re, subprocess, tempfile, abc, copy
+import os, sys, re, subprocess, abc
 
 def generatePhases(**ps):
     return type('Phase', (), ps)
@@ -27,15 +27,15 @@ class SourceFile(InputFile):
     # Here we encode the rules such as how ".c" becomes ".o" for the link phase.
     def langAfterPhase(self, phase):
         if phase == Phase.PREPROCESS:
-            if lang in {"c", "c-header"}:
+            if self.lang in {"c", "c-header"}:
                 return "cpp-output"
-            if lang in {"c++", "c++-header"}:
+            if self.lang in {"c++", "c++-header"}:
                 return "c++-cpp-output"
-            if lang in {"objective-c", "objective-c-header"}:
+            if self.lang in {"objective-c", "objective-c-header"}:
                 return "objective-c-cpp-output"
-            if lang in {"objective-c++", "objective-c++-header"}:
+            if self.lang in {"objective-c++", "objective-c++-header"}:
                 return "objective-c++-cpp-output"
-            if lang in {"assembler-with-cpp"}:
+            if self.lang in {"assembler-with-cpp"}:
                 return "assembler"
         elif phase == Phase.COMPILE:
             return "assembler"
@@ -50,7 +50,7 @@ class SourceFile(InputFile):
         if phase == Phase.ASSEMBLE:
             return stemBasename + ".o"
         if phase == Phase.PREPROCESS:
-            langToUse = lang if lang != None else guessInputLanguageFromFilename(self)
+            langToUse = self.lang if self.lang != None else guessInputLanguageFromFilename(self)
             if langToUse == "c":
                 return stemBasename + ".i"
             elif langToUse == "c++":
@@ -109,7 +109,7 @@ def phasesForInputLanguage(inputLanguage):
         return set.union({Phase.PREPROCESS}, laterPhases)
     if inputLanguage == None:
         return set({Phase.LINK})
-    sys.stderr.write("Could not enumerate phases for input filename %s\n" % inputFilename)
+    sys.stderr.write("Could not enumerate phases for input language %s\n" % inputLanguage)
     return {}
 
 class TempFileManager:
@@ -411,7 +411,7 @@ class CompilerWrapper:
                 self.debugMsg("Default treatment for options %s\n" % args[num])
                 self.argOption(range(Phase.DRIVER, 1+Phase.LINK), num, args[num], None)
             else:
-                assert false
+                assert False
         # now we've seen all the options, we can tell which one the "-o" applies to (if we saw it)
         if outputFile:
             self.argOption({max(self.enabledPhases)}, outputFileNum, "-o", outputFile)
@@ -552,12 +552,12 @@ class CompilerWrapper:
 
     def buildOneObjectFile(self, sourceFile, outputFilename, lang="c"):
         phases = {Phase.PREPROCESS, Phase.COMPILE, Phase.ASSEMBLE}
-        options = specialOptionsForPhases(phases, ["-o"])
+        options = self.specialOptionsForPhases(phases, ["-o"])
         options.pop("-o", None)
         # This means "preprocess-and-compile options and items [but not filenames]", 
         # IMPORTANT: "-I" is an item! so we're interested in more than just options
-        args = self.flatOptions(options) + self.flatItems([x for x in itemsForPhases(phases) if not isinstance(x, SourceFile)])
-        return self.runCompiler([sourceFile if isinstance(x, SourceFile) else SourceFile(x, lang)] \
+        args = self.flatOptions(options) + self.flatItems([x for x in self.itemsForPhases(phases) if not isinstance(x, SourceFile)])
+        return self.runCompiler([sourceFile if isinstance(self.x, SourceFile) else SourceFile(self.x, lang)] \
          + args + ["-c", "-o", outputFilename], {Phase.PREPROCESS, Phase.COMPILE, Phase.ASSEMBLE})
     
     def optionToStopAfterPhase(self, phase):

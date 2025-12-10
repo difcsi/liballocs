@@ -428,7 +428,7 @@ liballocs_dummyweaks.so: dummyweaks.o librunt_dummyweaks.o
 .PHONY: clean
 clean: 
 	rm -f *.o */*.o $(filter-out liballocs.so,$(wildcard *.so)) *.d */*.d *.a *_fast.c
-	rm -r allocators
+	rm -rf allocators
 
 .PHONY: install
 install: all
