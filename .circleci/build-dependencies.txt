@@ -18,6 +18,9 @@ libppx-deriving-yojson-ocaml-dev
 libstdlib-ocaml-dev
 cppo
 libgmp-dev
+ocaml
+ocamlbuild
+libnum-ocaml-dev
 default-jdk-headless
 python3
 make
