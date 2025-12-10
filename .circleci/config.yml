@@ -11,14 +11,19 @@ jobs:
             dpkg --add-architecture i386
             apt update
             DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt install -y \
-             $(cat .circleci/build-dependencies.txt)
+              $(cat .circleci/build-dependencies.txt)
+      - run:
+          name: Report compiler versions
+          command: |
+            gcc --version
+            g++ --version
+            dpkg -l | grep ocaml
       - run:
           name: Update submodules
           command: git submodule update --init --recursive
       - run:
           name: Build submodules
-          command: make -C contrib -j 2
-          no_output_timeout: 1h
+          command: make -C contrib -j $(nproc)
       - run:
           name: Build project
           command: |
@@ -46,15 +51,14 @@ jobs:
       - image: ubuntu:24.04
     steps:
       - checkout
-      - attach_workspace:
-          at: /
       - run:
           name: Install dependencies
-          # We use 'clang' for some tests, so need that
           command: |
             apt update
             DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt install -y \
               $(cat .circleci/test-dependencies.txt)
+      - attach_workspace:
+          at: /
       - run:
           name: Run tests
           command: make -C /root/project/tests -k SKIP_CASES=lib-test
