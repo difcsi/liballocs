@@ -131,7 +131,7 @@ class AllocsCompilerWrapper(CompilerWrapper):
         with (self.makeErrFile(os.path.realpath(filename) + ".fixuplog", "w+") if not errfile else errfile) as errfile:
             regex = "|".join(patterns)
             self.debugMsg("Looking for defined functions matching `%s'\n" % regex)
-            cmdstring = "nm -fbsd \"%s\" | grep -v '^[0-9a-f ]\+ U ' | egrep \"^[0-9a-f ]+ . (%s)$\" | sed 's/^[0-9a-f ]\+ . //'" \
+            cmdstring = r"nm -fbsd \"%s\" | grep -v '^[0-9a-f ]\+ U ' | egrep \"^[0-9a-f ]+ . (%s)$\" | sed 's/^[0-9a-f ]\+ . //'" \
                 % (filename, regex)
             self.debugMsg("cmdstring for objdump is " + cmdstring + "\n")
             grep_output = subprocess.Popen(["sh", "-c", cmdstring], stdout=subprocess.PIPE, stderr=errfile).communicate()[0].decode()
