@@ -1,0 +1,11 @@
+ocamlbuild
+ocamlfind
+num
+dune
+dune-configurator
+cppo
+csexp
+ppx_deriving_yojson
+yojson
+zarith
+stdlib-shims

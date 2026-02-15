@@ -29,4 +29,3 @@ libboost-serialization-dev
 libboost-filesystem-dev
 libffi-dev
 gettext-base
-libgmp-dev

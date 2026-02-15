@@ -12,46 +12,58 @@ jobs:
     container:
       image: ubuntu:24.04
     steps:
-      - name: Install dependencies
+      - name: Install Git for checkout
         run: |
-          dpkg --add-architecture i386
           apt update
-          DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt install -y \
-            build-essential libbsd-dev libelf-dev libdw-dev binutils-dev zlib1g-dev \
-            autoconf automake libtool pkg-config autoconf-archive \
-            ocaml ocamlbuild ocaml-findlib libnum-ocaml-dev \
-            default-jdk-headless python3 \
-            make git gawk gdb wget libc6-dbg \
-            libunwind-dev libunwind-dev:i386 linux-libc-dev-i386-cross libc6-dev-i386 \
-            libboost-iostreams-dev libboost-regex-dev \
-            libboost-serialization-dev libboost-filesystem-dev libffi-dev \
-            gettext-base \
-            ca-certificates clang \
-            pkg-config libglib2.0-dev
-      
-      - name: Report OCaml version for debugging
-        run: |
-          dpkg -l | grep ocaml
+          DEBIAN_FRONTEND=noninteractive apt install -y git ca-certificates
       
       - name: Checkout code with submodules
         uses: actions/checkout@v4
         with:
           submodules: recursive
       
+      - name: Install build dependencies
+        run: |
+          dpkg --add-architecture i386
+          apt update
+          DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt install -y \
+            $(cat .circleci/build-dependencies.txt)
+      
+      - name: Install additional dependencies
+        run: |
+          DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt install -y \
+            ocamlbuild ocaml-findlib libnum-ocaml-dev \
+            ca-certificates clang libglib2.0-dev
+      
+      - name: Report OCaml version for debugging
+        run: |
+          dpkg -l | grep ocaml
+      
+      - name: Initialize opam and install OCaml 5.1.0
+        run: |
+          opam init --disable-sandboxing --compiler=5.1.0 -y
+          eval $(opam env)
+          opam install contrib/cil --deps-only -y
+      
       - name: Build submodules
-        run: make -C contrib -j $(nproc)
+        run: |
+          eval $(opam env)
+          make -C contrib -j $(nproc)
       
       - name: Build project
         run: |
+          eval $(opam env)
           . contrib/env.sh
           ./autogen.sh
           ./configure
           make -j $(nproc)
       
       - name: Run tests
-        run: make -C tests -k
+        run: |
+          eval $(opam env)
+          make -C tests -k
   
-  build-latest-gcc-ocaml414:
+  build-latest-gcc-ocaml510:
     runs-on: ubuntu-24.04
     needs: build-and-test
     continue-on-error: true
@@ -59,27 +71,30 @@ jobs:
       image: gcc:latest
     
     steps:
-      - name: Install opam and dependencies
+      - name: Install Git for checkout
         run: |
           apt-get update
-          apt-get install -y opam build-essential libbsd-dev libelf-dev libdw-dev \
-            binutils-dev zlib1g-dev autoconf automake libtool pkg-config autoconf-archive \
-            default-jdk-headless python3 make git gawk gdb wget \
-            libunwind-dev libboost-iostreams-dev libboost-regex-dev \
-            libboost-serialization-dev libboost-filesystem-dev libffi-dev \
-            gettext-base ca-certificates clang pkg-config libglib2.0-dev
-      
-      - name: Initialize opam and install OCaml 4.14
-        run: |
-          opam init --disable-sandboxing -y
-          opam switch create 4.14 4.14.2
-          eval $(opam env)
-          opam install -y ocamlbuild ocamlfind num
+          apt-get install -y git ca-certificates
       
       - name: Checkout code with submodules
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y $(cat .circleci/build-dependencies.txt)
+      
+      - name: Install additional dependencies
+        run: |
+          apt-get install -y ca-certificates clang libglib2.0-dev
+      
+      - name: Initialize opam and install OCaml 5.1.0
+        run: |
+          opam init --disable-sandboxing --compiler=5.1.0 -y
+          eval $(opam env)
+          opam install contrib/cil --deps-only -y
       
       - name: Build submodules
         run: |

@@ -19,14 +19,23 @@ jobs:
             g++ --version
             dpkg -l | grep ocaml
       - run:
+          name: Initialize opam and install OCaml 5.1.0
+          command: |
+            opam init --disable-sandboxing --compiler=5.1.0 -y
+            eval $(opam env)
+            opam install contrib/cil --deps-only -y
+      - run:
           name: Update submodules
           command: git submodule update --init --recursive
       - run:
           name: Build submodules
-          command: make -C contrib -j $(nproc)
+          command: |
+            eval $(opam env)
+            make -C contrib -j $(nproc)
       - run:
           name: Build project
           command: |
+            eval $(opam env)
             . contrib/env.sh
             ./autogen.sh
             ./configure
@@ -47,11 +56,19 @@ jobs:
             apt update
             DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt install -y \
               $(cat .circleci/test-dependencies.txt)
+      - run:
+          name: Initialize opam and install OCaml 5.1.0
+          command: |
+            opam init --disable-sandboxing --compiler=5.1.0 -y
+            eval $(opam env)
+            opam install contrib/cil --deps-only -y
       - attach_workspace:
           at: /
       - run:
           name: Run tests
-          command: make -C /root/project/tests -k
+          command: |
+            eval $(opam env)
+            make -C /root/project/tests -k
 
 workflows:
   version: 2
