@@ -39,26 +39,32 @@ jobs:
         run: |
           dpkg -l | grep ocaml
       
-      - name: Initialize opam
+      - name: Initialize opam and install OCaml 5.1.0
         run: |
           opam init --disable-sandboxing -y
-          eval $(opam env)
+          opam switch create 5.1.0 5.1.0
+          eval $(opam env --switch=5.1.0)
           opam install -y ocamlbuild ocamlfind num dune dune-configurator cppo csexp ppx_dervive_yojson ppx_deriving ppx_deriving_yojson yojson zarith stdlib-shims
       
       - name: Build submodules
-        run: make -C contrib -j $(nproc)
+        run: |
+          eval $(opam env --switch=5.1.0)
+          make -C contrib -j $(nproc)
       
       - name: Build project
         run: |
+          eval $(opam env --switch=5.1.0)
           . contrib/env.sh
           ./autogen.sh
           ./configure
           make -j $(nproc)
       
       - name: Run tests
-        run: make -C tests -k
+        run: |
+          eval $(opam env --switch=5.1.0)
+          make -C tests -k
   
-  build-latest-gcc-ocaml414:
+  build-latest-gcc-ocaml510:
     runs-on: ubuntu-24.04
     needs: build-and-test
     continue-on-error: true
@@ -85,21 +91,21 @@ jobs:
         run: |
           apt-get install -y ca-certificates clang libglib2.0-dev
       
-      - name: Initialize opam and install OCaml 4.14
+      - name: Initialize opam and install OCaml 5.1.0
         run: |
           opam init --disable-sandboxing -y
-          opam switch create 4.14 4.14.2
-          eval $(opam env)
+          opam switch create 5.1.0 5.1.0
+          eval $(opam env --switch=5.1.0)
           opam install -y ocamlbuild ocamlfind num
       
       - name: Build submodules
         run: |
-          eval $(opam env)
+          eval $(opam env --switch=5.1.0)
           make -C contrib -j $(nproc)
       
       - name: Build project
         run: |
-          eval $(opam env)
+          eval $(opam env --switch=5.1.0)
           . contrib/env.sh
           ./autogen.sh
           ./configure
@@ -107,5 +113,5 @@ jobs:
       
       - name: Run tests
         run: |
-          eval $(opam env)
+          eval $(opam env --switch=5.1.0)
           make -C tests -k
