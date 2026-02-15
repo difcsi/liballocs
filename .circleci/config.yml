@@ -23,7 +23,7 @@ jobs:
           command: |
             opam init --disable-sandboxing --compiler=5.1.0 -y
             eval $(opam env)
-            opam install -y $(cat .circleci/opam-packages.txt)
+            opam install contrib/cil --deps-only -y
       - run:
           name: Update submodules
           command: git submodule update --init --recursive
@@ -61,7 +61,7 @@ jobs:
           command: |
             opam init --disable-sandboxing --compiler=5.1.0 -y
             eval $(opam env)
-            opam install -y $(cat .circleci/opam-packages.txt)
+            opam install contrib/cil --deps-only -y
       - attach_workspace:
           at: /
       - run:

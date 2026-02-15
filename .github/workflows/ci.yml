@@ -43,7 +43,7 @@ jobs:
         run: |
           opam init --disable-sandboxing --compiler=5.1.0 -y
           eval $(opam env)
-          opam install -y ocamlbuild ocamlfind num dune dune-configurator cppo csexp   ppx_deriving_yojson yojson zarith stdlib-shims
+          opam install contrib/cil --deps-only -y
       
       - name: Build submodules
         run: |
@@ -94,7 +94,7 @@ jobs:
         run: |
           opam init --disable-sandboxing --compiler=5.1.0 -y
           eval $(opam env)
-          opam install -y ocamlbuild ocamlfind num
+          opam install contrib/cil --deps-only -y
       
       - name: Build submodules
         run: |
