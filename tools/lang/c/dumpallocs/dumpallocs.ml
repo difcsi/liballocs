@@ -275,7 +275,7 @@ let rec getSizeExpr (ex: exp) (env : (int * sz) list) (gs : Cil.global list) : s
                                     (let tsf = Cil.typeSig fi.ftype in
                                      tsMatchModuloSignedness tsf ts2 ||
                                      (match tsf with
-                                        TSArray(tsa, Some(bound), _) when bound = cilint_of_int64 Int64.one ->
+                                        TSArray(tsa, Some(bound), _) when int64_of_cilint bound = Int64.one ->
                                                 tsMatchModuloSignedness tsa ts2
                                       | ts -> false)
                                     )
