@@ -135,14 +135,10 @@ clean::
 .PHONY: build-cil
 build-cil: cil.stamp mainFeature.cmx
 
-.PHONY: dune-configurator
-dune-configurator:
-	cd dune && dune build -p dune-configurator && dune install -p dune-configurator --prefix=${LIBALLOCS_OCAML_PREFIX}
-
 # PROBLEM: cil's ocamlbuild takes a significant time to re-run even in the
 # case where nothing's changed. So use a stamp to run around that.
 cil.stamp: goblint-cil
-goblint-cil: dune-configurator
+goblint-cil: 
 	cd cil && dune build && dune build @install && dune install --prefix=${LIBALLOCS_OCAML_PREFIX}
 	touch cil.stamp
 
@@ -159,11 +155,10 @@ mainFeature.cmx: cil.stamp
 	cd cil && cp ${CIL_ROOT}/src/mainFeature.ml ${CIL_ROOT}/src/mainFeature.mli ${CIL_INSTALL} && ocamlfind ocamlopt -c ${CIL_INSTALL}/mainFeature.mli && ocamlfind ocamlopt -linkpkg -package dynlink -package findlib -package str -package zarith -I ${CIL_INSTALL} ${CIL_INSTALL}goblintCil.cmxa ${CIL_INSTALL}mainFeature.ml
 
 .PHONY: goblint-cil-deps
-goblint-cil-deps: dune-configurator
-
+goblint-cil-deps: 
+	echo "None"
 clean::
 	cd cil && dune clean
-	cd dune   && dune uninstall -p dune-configurator --prefix=/usr/lib/ocaml/
 	rm -f cil.stamp
 
 # ----------------------------toolsub
