@@ -41,19 +41,18 @@ jobs:
       
       - name: Initialize opam and install OCaml 5.1.0
         run: |
-          opam init --disable-sandboxing -y
-          opam switch create 5.1.0 5.1.0
-          eval $(opam env --switch=5.1.0)
-          opam install -y ocamlbuild ocamlfind num dune dune-configurator cppo csexp ppx_dervive_yojson ppx_deriving ppx_deriving_yojson yojson zarith stdlib-shims
+          opam init --disable-sandboxing --compiler=5.1.0 -y
+          eval $(opam env)
+          opam install -y ocamlbuild ocamlfind num dune dune-configurator cppo csexp   ppx_deriving_yojson yojson zarith stdlib-shims
       
       - name: Build submodules
         run: |
-          eval $(opam env --switch=5.1.0)
+          eval $(opam env)
           make -C contrib -j $(nproc)
       
       - name: Build project
         run: |
-          eval $(opam env --switch=5.1.0)
+          eval $(opam env)
           . contrib/env.sh
           ./autogen.sh
           ./configure
@@ -61,7 +60,7 @@ jobs:
       
       - name: Run tests
         run: |
-          eval $(opam env --switch=5.1.0)
+          eval $(opam env)
           make -C tests -k
   
   build-latest-gcc-ocaml510:
@@ -93,19 +92,18 @@ jobs:
       
       - name: Initialize opam and install OCaml 5.1.0
         run: |
-          opam init --disable-sandboxing -y
-          opam switch create 5.1.0 5.1.0
-          eval $(opam env --switch=5.1.0)
+          opam init --disable-sandboxing --compiler=5.1.0 -y
+          eval $(opam env)
           opam install -y ocamlbuild ocamlfind num
       
       - name: Build submodules
         run: |
-          eval $(opam env --switch=5.1.0)
+          eval $(opam env)
           make -C contrib -j $(nproc)
       
       - name: Build project
         run: |
-          eval $(opam env --switch=5.1.0)
+          eval $(opam env)
           . contrib/env.sh
           ./autogen.sh
           ./configure
@@ -113,5 +111,5 @@ jobs:
       
       - name: Run tests
         run: |
-          eval $(opam env --switch=5.1.0)
+          eval $(opam env)
           make -C tests -k

@@ -21,22 +21,21 @@ jobs:
       - run:
           name: Initialize opam and install OCaml 5.1.0
           command: |
-            opam init --disable-sandboxing -y
-            opam switch create 5.1.0 5.1.0
-            eval $(opam env --switch=5.1.0)
-            opam install -y ocamlbuild ocamlfind num dune dune-configurator cppo csexp ppx_dervive_yojson ppx_deriving ppx_deriving_yojson yojson zarith stdlib-shims
+            opam init --disable-sandboxing --compiler=5.1.0 -y
+            eval $(opam env)
+            opam install -y $(cat .circleci/opam-packages.txt)
       - run:
           name: Update submodules
           command: git submodule update --init --recursive
       - run:
           name: Build submodules
           command: |
-            eval $(opam env --switch=5.1.0)
+            eval $(opam env)
             make -C contrib -j $(nproc)
       - run:
           name: Build project
           command: |
-            eval $(opam env --switch=5.1.0)
+            eval $(opam env)
             . contrib/env.sh
             ./autogen.sh
             ./configure
@@ -60,16 +59,15 @@ jobs:
       - run:
           name: Initialize opam and install OCaml 5.1.0
           command: |
-            opam init --disable-sandboxing -y
-            opam switch create 5.1.0 5.1.0
-            eval $(opam env --switch=5.1.0)
-            opam install -y ocamlbuild ocamlfind num
+            opam init --disable-sandboxing --compiler=5.1.0 -y
+            eval $(opam env)
+            opam install -y $(cat .circleci/opam-packages.txt)
       - attach_workspace:
           at: /
       - run:
           name: Run tests
           command: |
-            eval $(opam env --switch=5.1.0)
+            eval $(opam env)
             make -C /root/project/tests -k
 
 workflows:
