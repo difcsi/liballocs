@@ -118,8 +118,7 @@ AC_ARG_ENABLE([lifetime-policies],
                   no) lifetime_policies=0 ;;
                   yes) lifetime_policies=4 ;;
                   *) lifetime_policies=${enableval} ;;
-               esac],
-              [lifetime_policies=0])
+               esac)
 AC_ARG_ENABLE([precise-requested-allocsize],
               AS_HELP_STRING([--enable-precise-requested-allocsize], [Make size queries over allocated objects return precisely the size requested at the allocation site (enabled by default)]),
               [precise_requested_allocsize=${enableval}], [precise_requested_allocsize=yes])

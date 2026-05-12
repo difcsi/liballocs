@@ -111,6 +111,7 @@ static inline struct insert *insert_for_chunk(void *userptr, sizefn_t *sizefn)
 /* By convention lifetime policy 0 is the manual deallocation policy */
 #define MANUAL_DEALLOCATION_POLICY 0
 #define MANUAL_DEALLOCATION_FLAG LIFETIME_POLICY_FLAG(MANUAL_DEALLOCATION_POLICY)
+#define C_GC_POLICY 2
 /* Manual deallocation is not an "attached" policy */
 #define HAS_LIFETIME_POLICIES_ATTACHED(lti) ((lti) & ~(MANUAL_DEALLOCATION_FLAG))
 typedef struct insert lifetime_insert_t;
