@@ -7,13 +7,13 @@ SUBDIRS = tools/lang . allocsld src lib
 # because then boost/icl/type_traits/type_to_string.hpp is borked
 # (w.r.t. template specializations on std::string), but
 # g++ only complains in C++17 mode and up.
-AM_CXXFLAGS = -std=c++17 -fpermissive -O2 $(DEBUG:%=-O0) -fno-omit-frame-pointer -ggdb -fkeep-inline-functions \
+AM_CXXFLAGS = -std=c++17 -fpermissive -O2 $(DEBUG:%=-O0) -fno-omit-frame-pointer -ggdb -gdwarf-4 -fkeep-inline-functions \
   -Wall -Wno-deprecated-declarations -fPIC -Wp,-w -Iinclude $(LIBSRK31CXX_CFLAGS) \
   $(LIBCXXFILENO_CFLAGS) $(LIBDWARFPP_CFLAGS) $(LIBCXXGEN_CFLAGS) $(LIBANTLR3CXX_CFLAGS) \
   $(DWARFIDL_CFLAGS) -I$(LIBRUNT)/include $(LIBALLOCSTOOL_CFLAGS)
 
 AM_CPPFLAGS =
-AM_CFLAGS = -Wall -std=gnu99 -ggdb -O3 -flto -Iinclude -fPIC -Wp,-w
+AM_CFLAGS = -Wall -std=gnu99 -ggdb -gdwarf-4 -O3 -flto -Iinclude -fPIC -Wp,-w
 AM_LDFLAGS =
 
 # ltdl complains if I don't set these....
