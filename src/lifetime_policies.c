@@ -257,8 +257,25 @@ void __notify_copy(void *dest, const void *src, unsigned long n)
 void __notify_free(void *dest)
 {
 	if (!__liballocs_is_initialized) return; // Do nothing until initialized
-	struct uniqtype *typ = try_get_alloc_type(dest);
-	if (!typ) return;
-	notify_copy_for_type(dest, NULL, UNIQTYPE_SIZE_IN_BYTES(typ), typ);
+
+	/* Resolve the type AND the real allocated extent in one query. Heap allocations
+	 * are typed as unbounded arrays (UNIQTYPE_SIZE_IN_BYTES == (unsigned)-1), so we
+	 * must bound the walk by the chunk's caller-usable size (get_info's out_size);
+	 * otherwise notify_copy_for_type walks ~4GB of arbitrary heap. */
+	struct big_allocation *maybe_the_allocation;
+	struct allocator *a = __liballocs_leaf_allocator_for(dest, &maybe_the_allocation);
+	if (!a) return;
+	unsigned unrecognized_heap_alloc_site_count =
+		__liballocs_unrecognised_heap_alloc_sites.count;
+	struct uniqtype *typ = NULL;
+	unsigned long objsz = 0;
+	struct liballocs_err *err = a->get_info(dest, maybe_the_allocation,
+		&typ, NULL, &objsz, NULL);
+	__liballocs_unrecognised_heap_alloc_sites.count = unrecognized_heap_alloc_site_count;
+	if (err || !typ) return;
+
+	unsigned long walksz = UNIQTYPE_SIZE_IN_BYTES(typ);
+	if (walksz > objsz) walksz = objsz; // clamp unbounded/oversized array types
+	notify_copy_for_type(dest, NULL, walksz, typ);
 }
 

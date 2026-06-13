@@ -727,14 +727,20 @@ liballocs_err_t __generic_malloc_get_info(struct allocator *a, sizefn_t *sizefn,
 		/* Promoted allocation: we already have the metadata. */
 		base = maybe_the_allocation->begin;
 		caller_usable_size = (char*) maybe_the_allocation->end - (char*) maybe_the_allocation->begin;
-		heap_info = insert_for_chunk_and_caller_usable_size(base, caller_usable_size
-			+ sizeof (INSERT_TYPE));
+		/* [begin, end) already excludes the insert, so it sits at
+		 * base + caller_usable_size; adding sizeof(INSERT_TYPE) would point past
+		 * the trailer into the next chunk's metadata. */
+		heap_info = insert_for_chunk_and_caller_usable_size(base, caller_usable_size);
 	}
 	else
 	{
-		size_t alloc_usable_chunksize = 0;
+		/* lookup_object_info_via_bitmap already returns the CALLER-usable size
+		 * (it subtracts sizeof(struct insert)); don't run it through
+		 * caller_usable_size_for_chunk_and_usable_size, which would subtract again
+		 * and report the size 8 bytes too small. */
+		size_t caller_usable_from_lookup = 0;
 		heap_info = lookup_object_info_via_bitmap(arena_info_for_userptr(a, obj),
-			obj, &base, &alloc_usable_chunksize, NULL, sizefn);
+			obj, &base, &caller_usable_from_lookup, NULL, sizefn);
 		if (!heap_info)
 		{
 			/* For an unindexed non-promoted chunk, we don't know the base, so
@@ -746,8 +752,7 @@ liballocs_err_t __generic_malloc_get_info(struct allocator *a, sizefn_t *sizefn,
 			return &__liballocs_err_unindexed_heap_object;
 		}
 		assert(base);
-		caller_usable_size = caller_usable_size_for_chunk_and_usable_size(base,
-			alloc_usable_chunksize);
+		caller_usable_size = caller_usable_from_lookup;
 	}
 	assert(heap_info);
 	if (out_base) *out_base = base;
@@ -769,10 +774,15 @@ liballocs_err_t __generic_malloc_set_type(struct allocator *a,
 	unsigned existing_alloc_site_id = INSERT_IS_WITH_TYPE(ins)
 		? ins->with_type.alloc_site_id
 		: __liballocs_allocsite_id((void*)(unsigned long) ins->initial.alloc_site);
+	/* Preserve MANUAL_DEALLOCATION_FLAG; overwriting the whole insert would strip it
+	 * (a later GC attach+detach would then free a still-referenced object). Mask to
+	 * MANUAL only so stale high bits are scrubbed rather than treated as policies. */
+	unsigned char existing_lp = ins->common.lifetime_policies & MANUAL_DEALLOCATION_FLAG;
 	*ins = (struct insert) { .with_type = {
 		.uniqtype_shifted = UNIQTYPE_SHIFT_FOR_INSERT(new_type),
 		.always_1 = 1,
-		.alloc_site_id = existing_alloc_site_id
+		.alloc_site_id = existing_alloc_site_id,
+		.lifetime_policies = existing_lp
 	} };
 	return NULL;
 }
@@ -842,11 +852,16 @@ liballocs_err_t extract_and_output_alloc_site_and_type(
 		 * a binary search on the table proper. But that's okay. We get
 		 * everything we need. */
 		allocsite_id_t allocsite_id = __liballocs_allocsite_id(alloc_site);
+		/* Preserve MANUAL_DEALLOCATION_FLAG across this type-install write-back (it
+		 * runs on the first type query, before any GC policy is attached): zeroing
+		 * the whole nibble would let a later attach+detach free a live object. Mask
+		 * to MANUAL only so stale high bits are scrubbed. */
+		unsigned char __preserved_lp = p_ins->common.lifetime_policies & MANUAL_DEALLOCATION_FLAG;
 		*p_ins = (struct insert) { .with_type = {
 			.uniqtype_shifted = UNIQTYPE_SHIFT_FOR_INSERT(alloc_uniqtype),
 			.alloc_site_id = allocsite_id, /* note: zero is a valid ID; -1 means unknown */
 			.always_1 = 1,
-			/* lifetime policies are implicitly zeroed */
+			.lifetime_policies = __preserved_lp,
 		} };
 #endif
 	}
