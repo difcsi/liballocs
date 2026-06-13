@@ -57,7 +57,7 @@ int close(int fd);
 void brk_replacement(struct generic_syscall *s, post_handler *post) __attribute__((visibility("hidden")));
 void brk_replacement(struct generic_syscall *s, post_handler *post)
 {
-	/* Linux gives us the old value on failure, and the new value on success. 
+	/* Linux gives us the old value on failure, and the new value on success.
 	 * In other words it always gives us the current sbrk. */
 	void *brk_asked_for = (void*) s->args[0];
 	/* HMM. Can I do a raw syscall here? It's an out-of-line call, but
@@ -250,6 +250,57 @@ static _Bool found_a_brk_or_sbrk;
  * This also avoids the "two copies" problem we had before, because only one copy
  * of this symbol will be callable, and the library initializer doesn't call it. 
  * But it does mean that libcrunch's stubs library has to call us explicitly. */
+/* systrap relies on SIGILL always being deliverable (it traps every syscall with
+ * ud2). Code that blocks all signals -- e.g. libunwind or Alaska's barrier --
+ * would block SIGILL too, making the next trapped syscall fatal. So strip SIGILL
+ * from any rt_sigprocmask block/setmask request at the syscall-emulation entry. */
+#ifndef SYS_rt_sigprocmask
+#define SYS_rt_sigprocmask 14 /* x86-64 */
+#endif
+#ifndef SYS_rt_sigaction
+#define SYS_rt_sigaction 13 /* x86-64 */
+#endif
+#define SIGILL_BIT (1UL << (4 /*SIGILL*/ - 1))
+void __systrap_pre_handling(struct generic_syscall *gsp)
+{
+	if (gsp->syscall_number == SYS_rt_sigprocmask)
+	{
+		int how = (int) gsp->args[0];               /* SIG_BLOCK==0, SIG_SETMASK==2 */
+		const unsigned long *set = (const unsigned long *) gsp->args[1];
+		size_t sz = (size_t) gsp->args[3];          /* sigsetsize, normally 8 */
+		if (set && (how == 0 /*SIG_BLOCK*/ || how == 2 /*SIG_SETMASK*/))
+		{
+			static __thread unsigned long stripped[16];
+			size_t n = sz / sizeof (unsigned long);
+			if (n < 1) n = 1; else if (n > 16) n = 16;
+			for (size_t i = 0; i < n; ++i) stripped[i] = set[i];
+			stripped[0] &= ~SIGILL_BIT; /* never let SIGILL be blocked */
+			gsp->args[1] = (long) stripped;
+		}
+	}
+	else if (gsp->syscall_number == SYS_rt_sigaction)
+	{
+		/* A handler with SIGILL in its sa_mask would block SIGILL while it runs,
+		 * making a trapped syscall inside it fatal. Strip SIGILL from sa_mask. The
+		 * kernel struct sigaction is { handler@0, flags@8, restorer@16, mask@24 }. */
+		const unsigned long *act = (const unsigned long *) gsp->args[1];
+		if (act)
+		{
+			static __thread unsigned long actbuf[8]; /* >= kernel sigaction (32 bytes) */
+			for (int i = 0; i < 4; ++i) actbuf[i] = act[i];
+			actbuf[3] &= ~SIGILL_BIT;                 /* sa_mask is word 3 (offset 24) */
+			gsp->args[1] = (long) actbuf;
+		}
+	}
+}
+
+/* Public forwarders for libsystrap's saved-context accessors. The *_internal
+ * extractors live in libsystrap but it is linked with --exclude-libs, so they
+ * aren't visible to other DSOs; these (exported) forwarders are. Alaska's GC
+ * barrier weak-references them to tell when a thread is parked in a syscall. */
+void *__systrap_current_saved_sp(void) { return __systrap_saved_sp_internal(); }
+void *__systrap_current_saved_ip(void) { return __systrap_saved_ip_internal(); }
+
 void __liballocs_systrap_init(void)
 {
 	/* NOTE: in a preload libcrunch run, there are two copies of this code running!
@@ -272,6 +323,10 @@ void __liballocs_systrap_init(void)
 	replaced_syscalls[SYS_brk] = brk_replacement;
 	replaced_syscalls[SYS_open] = open_replacement;
 	replaced_syscalls[SYS_openat] = openat_replacement;
+	/* Resume clone/clone3 children by rt_sigreturn'ing directly from the copied
+	 * sigframe rather than unwinding the SIGILL handler's epilogue, which races
+	 * under Alaska's clone-site stack layout. See do_clone/do_clone3. */
+	__systrap_clone_child_direct_sigreturn = 1;
 	/* Get a hold of the ld.so's link map entry. How? We get it from the auxiliary
 	 * vector. */
 	const char *interpreter_fname = NULL;
