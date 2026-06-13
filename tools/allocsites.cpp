@@ -1,5 +1,7 @@
 #include <fstream>
 #include <sstream>
+#include <cstdlib> // std::_Exit, EXIT_SUCCESS (teardown-skip workaround)
+#include <cstdio>  // std::fflush
 #include <map>
 #include <set>
 #include <string>
@@ -99,5 +101,13 @@ int main(int argc, char **argv)
 	}
 	// close the list
 	cout << "\n};\n";
-	return 0;
-}	
+
+	/* Skip C++/atexit teardown. The table is fully written; running destructors
+	 * triggers an upstream libdwarf/libdwarfpp DIE-deallocation heap overflow
+	 * ("corrupted size vs. prev_size"). As a short-lived batch process the OS
+	 * reclaims everything on exit, so this is safe. Flush first, _Exit() doesn't. */
+	std::cout.flush();
+	std::cerr.flush();
+	std::fflush(nullptr);
+	std::_Exit(EXIT_SUCCESS);
+}
