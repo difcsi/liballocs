@@ -490,7 +490,22 @@ struct file_metadata *__static_file_allocator_notify_load(void *handle, const vo
 		if (!early_lib_handles[i]) break;
 		if (early_lib_handles[i] == handle) { we_are_early = 1; break; }
 	}
-	if (!we_are_early) load_metadata(meta, handle);
+	if (!we_are_early)
+	{
+		load_metadata(meta, handle);
+		/* For dlopen'd objects the per-segment metavectors were set up earlier,
+		 * BEFORE load_metadata() loaded the meta object, so they were left NULL and
+		 * static-symbol type queries return NULL. Early libs get a second setup pass
+		 * in load_meta_objects_for_early_libs(); redo it here now that it's loaded. */
+		unsigned nload = 0;
+		for (unsigned i = 0; i < meta->m.phnum; ++i)
+		{
+			if (meta->m.phdrs[i].p_type == PT_LOAD)
+			{
+				__static_segment_setup_metavector(meta, i, nload++);
+			}
+		}
+	}
 	if (containing_mapping_bigalloc == brk_mapping_bigalloc)
 	{
 		/* snap the brk bigalloc's beginning into its rightful place */
