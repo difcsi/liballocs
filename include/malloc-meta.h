@@ -17,7 +17,10 @@
 /* HACK: copied from memtable.h. */
 /* Thanks to Martin Buchholz -- <http://www.wambold.com/Martin/writings/alignof.html> */
 #ifndef ALIGNOF
-#if __STDC_VERSION__ >= 201112L
+#ifdef __cplusplus
+/* In C++ the offsetof-with-local-type trick below is ill-formed; use alignof. */
+#define ALIGNOF(type) alignof(type)
+#elif __STDC_VERSION__ >= 201112L
 #define ALIGNOF _Alignof
 #else
 /* Clang barfs at offsetof in a constant expression, e.g. _Static_assert:

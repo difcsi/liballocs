@@ -845,6 +845,10 @@ static inline int __liballocs_walk_stack(int (*cb)(void *, void *, void *, void 
 
 /* Garbage collection policies are defined by two callback functions called on
  * reference creation and deletion */
+
+#define MANUAL_DEALLOCATION_POLICY 0
+#define C_GC_POLICY 1
+
 typedef void (*__gc_callback_t)(const void *target, const void **from);
 
 // Return the new lifetime policy id (or negative number on failure)
@@ -854,7 +858,7 @@ void __liballocs_attach_lifetime_policy(int policy_id, const void *obj);
 void __liballocs_detach_lifetime_policy(int policy_id, const void *obj);
 static inline void __liballocs_detach_manual_dealloc_policy(const void *obj)
 {
-    __liballocs_detach_lifetime_policy(0 /* MANUAL_DEALLOCATION_POLICY */, obj);
+    __liballocs_detach_lifetime_policy(MANUAL_DEALLOCATION_POLICY /* MANUAL_DEALLOCATION_POLICY */, obj);
 }
 #endif
 
