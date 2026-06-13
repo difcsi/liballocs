@@ -461,6 +461,10 @@ struct allocator ALLOC_ALLOCATOR_NAME(allocator_namefrag) = { \
 	.is_cacheable = 1, \
 	.ensure_big = ensure_big, \
 	.set_type = set_type, \
+	/* Wire get_size to the usable-size fn: the lifetime-policies path calls \
+	 * a->get_size to locate the chunk's insert trailer, so leaving it NULL made \
+	 * __liballocs_attach_lifetime_policy() jump through a NULL pointer. */ \
+	.get_size = (unsigned long (*)(void *)) sizefn, \
 	.free = (void (*)(struct allocated_chunk *)) free, \
 };
 
