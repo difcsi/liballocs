@@ -23,13 +23,13 @@ jobs:
           command: git submodule update --init --recursive
       - run:
           name: Build submodules
-          command: make -C contrib -j $(nproc)
+          command: make -C contrib -j 2
       - run:
           name: Build project
           command: |
             . contrib/env.sh
             ./autogen.sh
-            ./configure
+            ./configure --enable-lifetime-policies
             make -j 2
       - run:
           name: Run library unit test (lib-test)

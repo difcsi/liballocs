@@ -188,6 +188,11 @@ else
 CORE_OBJS += fake-libunwind.o
 CFLAGS += -fno-omit-frame-pointer
 endif
+# When lifetime policies are enabled, build the lifetime-policies allocator.
+# Must be added to CORE_OBJS before ALL_OBJS/LIBALLOCS_*_OBJS expand below.
+ifneq ($(LIFETIME_POLICIES),)
+CORE_OBJS += lifetime_policies.o
+endif
 NOPRELOAD_OBJS := #uniqtypes.o # never link this into a preload lib! nor include in _preload.a!
  # recall that liballocs.a is only for static-linked client binaries (exe or solib).
  # What should liballocs.a include? E.g. does a client static-linked exe need this
