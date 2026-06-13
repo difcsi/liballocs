@@ -7,7 +7,7 @@ include $(SRCROOT)/config.mk
 CFLAGS += -D_FILE_OFFSET_BITS=64
 CFLAGS += -DIN_LIBRUNT_DSO
 CFLAGS += -DIN_LIBALLOCS_DSO
-CFLAGS += -std=gnu11 -fPIC -Wall -g -I../include -I$(SRCROOT)/include -I$(LIBMALLOCHOOKS)/include \
+CFLAGS += -std=gnu11 -fPIC -Wall -g -gdwarf-4 -I../include -I$(SRCROOT)/include -I$(LIBMALLOCHOOKS)/include \
    -I$(LIBSYSTRAP)/include -I$(LIBRUNT)/include -I$(DONALD)/src -I$(LIBDLBIND)/include -I$(srcdir) -Wno-unused
 ifeq ($(DEBUG),)
 CFLAGS += -flto -ffat-lto-objects
