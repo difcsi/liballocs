@@ -174,15 +174,21 @@ struct allocator *__liballocs_leaf_allocator_for(const void *obj,
 	{
 		deepest = cur;
 
-		/* Increment: does one of the children overlap? */
+		/* Increment: does one of the children overlap? At most one can,
+		 * because sibling bigallocs partition their parent's range and so
+		 * never overlap (they all share the same depth -- see the
+		 * sanity check in pageindex.c). So we can stop at the first match,
+		 * just as find_bigalloc_recursive() and find_deepest_bigalloc_recursive()
+		 * do when they recurse into the first overlapping child. */
 		for (struct big_allocation *child = BIDX(cur->first_child);
 				__builtin_expect(child != NULL, 0);
 				child = BIDX(child->next_sib))
 		{
-			if ((char*) child->begin <= (char*) obj && 
+			if ((char*) child->begin <= (char*) obj &&
 					(char*) child->end > (char*) obj)
 			{
 				cur = child;
+				break;
 			}
 		}
 		

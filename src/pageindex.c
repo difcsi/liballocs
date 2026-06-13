@@ -449,14 +449,27 @@ void __pageindex_init(void)
 
 static struct big_allocation *find_free_bigalloc(void)
 {
-	for (struct big_allocation *p = &big_allocations[1]; p < &big_allocations[NBIGALLOCS]; ++p)
+	/* Next-fit scan: remember where the previous search succeeded and resume
+	 * from there, wrapping around once. This avoids re-scanning the dense
+	 * prefix of in-use slots on every bigalloc creation (the old code always
+	 * restarted at index 1, making each creation O(NBIGALLOCS)). We are always
+	 * called under BIG_LOCK, so the static cursor needs no further synchronisation.
+	 * The wrap guarantees we still examine every candidate slot (1..NBIGALLOCS-1),
+	 * so a free slot is found whenever one exists. */
+	static unsigned hint = 1;
+	unsigned i = hint;
+	for (unsigned scanned = 0; scanned < NBIGALLOCS - 1; ++scanned)
 	{
+		struct big_allocation *p = &big_allocations[i];
 		SANITY_CHECK_BIGALLOC(p);
-		
+
 		if (!BIGALLOC_IN_USE(p))
 		{
+			hint = (i + 1 < NBIGALLOCS) ? i + 1 : 1; /* index 0 is reserved */
 			return p;
 		}
+
+		if (++i >= NBIGALLOCS) i = 1;
 	}
 	abort();
 }

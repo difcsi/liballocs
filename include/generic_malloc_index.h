@@ -343,15 +343,19 @@ static inline struct insert *__generic_malloc_index_insert(
 	// first check our bitmap is big enough
 	ensure_has_bitmap_to(a, info, (char*) allocptr + caller_requested_size);
 	bitmap_word_t *bitmap = info->bitmap;
-	/* The address *must* be in our tracked range. Assert this. */
-#ifndef NO_BIGALLOCS
-	struct big_allocation *arena = __lookup_bigalloc_under_by_suballocator(
-		allocptr, /*arena->suballocator*/ a,
-		/*arena*/ NULL, NULL);
-	assert(info->bitmap_base_addr == ROUND_DOWN_PTR(arena->begin, MALLOC_ALIGN*BITMAP_WORD_NBITS)); // start of coverage (not of bitmap)
-	void *bitmap_end_addr = (void*)((uintptr_t) info->bitmap_base_addr +       // limit of coverage
-		((struct arena_bitmap_info *) arena->suballocator_private)->nwords * MALLOC_ALIGN * BITMAP_WORD_NBITS);
-	assert((uintptr_t) allocptr <= (uintptr_t) bitmap_end_addr);
+	/* The address *must* be in our tracked range. Assert this. The arena
+	 * bigalloc is otherwise only needed in the (rare) promotion case below,
+	 * so outside debug builds we avoid this tree walk and look it up lazily. */
+#if !defined(NO_BIGALLOCS) && !defined(NDEBUG)
+	{
+		struct big_allocation *arena = __lookup_bigalloc_under_by_suballocator(
+			allocptr, /*arena->suballocator*/ a,
+			/*arena*/ NULL, NULL);
+		assert(info->bitmap_base_addr == ROUND_DOWN_PTR(arena->begin, MALLOC_ALIGN*BITMAP_WORD_NBITS)); // start of coverage (not of bitmap)
+		void *bitmap_end_addr = (void*)((uintptr_t) info->bitmap_base_addr +       // limit of coverage
+			((struct arena_bitmap_info *) arena->suballocator_private)->nwords * MALLOC_ALIGN * BITMAP_WORD_NBITS);
+		assert((uintptr_t) allocptr <= (uintptr_t) bitmap_end_addr);
+	}
 #endif
 
 #ifdef TRACE_GENERIC_MALLOC_INDEX
@@ -399,6 +403,10 @@ static inline struct insert *__generic_malloc_index_insert(
 	{
 		void *bigalloc_begin = allocptr;
 		assert(caller_requested_size <= alloc_usable_size - insert_size);
+		/* Look up the containing arena bigalloc lazily -- only needed here. */
+		struct big_allocation *arena = __lookup_bigalloc_under_by_suballocator(
+			allocptr, /*arena->suballocator*/ a,
+			/*arena*/ NULL, NULL);
 		// bigalloc size was the caller-usable size -- WHY? requested size seems better,
 		// because then e.g. if caller is creating an arena, it knows how big it is
 		struct big_allocation *this_chunk_b = __generic_malloc_fresh_big(arena->suballocator,
@@ -617,13 +625,19 @@ struct insert *lookup_object_info_via_bitmap(struct arena_bitmap_info *info,
 	{
 		found_bitidx += nbits_hidden;
 		object_start = info->bitmap_base_addr + (MALLOC_ALIGN * found_bitidx);
-		found_ins = insert_for_chunk(object_start, sizefn);
+		/* Query the chunk's usable size only once. Both the insert location
+		 * and the reported object size derive from it, so calling sizefn
+		 * (e.g. malloc_usable_size) twice -- as insert_for_chunk() and
+		 * usersize() would each do -- just duplicates a non-trivial call. */
+		unsigned long caller_usable_size = caller_usable_size_for_chunk_and_usable_size(
+			object_start, sizefn(object_start));
+		found_ins = insert_for_chunk_and_caller_usable_size(object_start, caller_usable_size);
+		if (out_object_size) *out_object_size = caller_usable_size;
 	}
 	if (found_ins)
 	{
 		assert(object_start);
 		if (out_object_start) *out_object_start = object_start;
-		if (out_object_size) *out_object_size = usersize(object_start, sizefn);
 	}
 	assert(!found_ins || INSERT_DESCRIBES_OBJECT(found_ins));
 	return found_ins;
