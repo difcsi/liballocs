@@ -423,7 +423,7 @@ report_problem:
 		/* If we're about to nuke any mapping sequence crossing the data segment start,
 		 * clear our pointers to those bigallocs. Note that a change in the program break
 		 * is the big reason for hitting this case in the first place. FIXME: so why
-		 * isn't tihs entirely handled by our __*_allocator_notify_brk() logic? */
+		 * isn't this entirely handled by our __*_allocator_notify_brk() logic? */
 		if (executable_data_segment_start_addr
 				&& (char*) executable_data_segment_start_addr
 					>= (char*) existing_seq->begin
@@ -799,11 +799,26 @@ static void do_mmap(void *mapped_addr, void *requested_addr, size_t requested_le
 	if (mapped_addr == NULL) abort();
 #define TRACE_MMAP_DEBUG_LEVEL 0 /* FIXME: move this up top, default to >0 */
 
-	debug_printf(TRACE_MMAP_DEBUG_LEVEL, 
+	debug_printf(TRACE_MMAP_DEBUG_LEVEL,
 		"MMAP: %p, %p, 0x%llx, %d, %d, %s, %d, 0x%llx, %s, %s\n",
 		mapped_addr, requested_addr, (unsigned long long) requested_length,
 		prot, flags, filename, fd, (unsigned long long) offset, format_symbolic_address(caller),
 		reason);
+
+	/* Don't instrument mappings made by Alaska's runtime: registering the bigalloc
+	 * re-enters our allocator, whose arena growth mmaps again and is re-trapped
+	 * here -- an unbounded init-time loop. Treat them as opaque and return. */
+	if (caller)
+	{
+		struct link_map *caller_lm = get_highest_loaded_object_below(caller);
+		if (caller_lm && caller_lm->l_name &&
+				strstr(caller_lm->l_name, "libalaska"))
+		{
+			debug_printf(1, "not instrumenting mmap by Alaska runtime %s (mapped %p, 0x%llx)\n",
+				caller_lm->l_name, mapped_addr, (unsigned long long) requested_length);
+			return;
+		}
+	}
 
 	/* The actual length is rounded up to page size. */
 	size_t mapped_length = ROUND_UP(requested_length, PAGE_SIZE);

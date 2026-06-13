@@ -9,12 +9,15 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <dlfcn.h>
+#include <string.h>
+#include <link.h>
 #include "liballocs_config.h"
 #include "liballocs.h"
 #include "liballocs_ext.h"
 #include "pageindex.h"
 #include "malloc-meta.h"
 #include "bitmap.h"         /* from librunt */
+#include "relf.h"           /* get_{highest,lowest}_loaded_object_{below,above} */
 
 /* A thread-local variable to override the "caller" arguments. 
  * Platforms without TLS have to do without this feature. */
@@ -328,6 +331,47 @@ static inline void ensure_has_bitmap_to(struct allocator *a,
 	}
 }
 
+/* Don't index allocations made by Alaska's runtime (libalaska / libalaska_core):
+ * indexing them grows our arena bitmap, whose mmap-backed arena re-mmaps on every
+ * Alaska allocation during alaska_init -- an init-time hang. Cache the runtime's
+ * loaded address ranges so the steady-state check is a couple of comparisons. */
+#ifndef ALASKA_RUNTIME_MAX_RANGES
+#define ALASKA_RUNTIME_MAX_RANGES 4
+#endif
+static inline _Bool __liballocs_caller_in_alaska_runtime(const void *caller)
+{
+	static struct { const void *lo, *hi; } ranges[ALASKA_RUNTIME_MAX_RANGES];
+	static int nranges = 0;
+	static _Bool resolved = 0;
+	if (!caller) return 0;
+	for (int i = 0; i < nranges; ++i)
+		if (caller >= ranges[i].lo && caller < ranges[i].hi) return 1;
+	if (resolved) return 0;
+	/* Scan the link map for the Alaska runtime objects. They are NEEDED, so the
+	 * loader maps them before any constructor (hence any allocation) runs. */
+	for (struct link_map *l = _r_debug.r_map; l; l = l->l_next)
+	{
+		if (!l->l_name || !strstr(l->l_name, "libalaska")) continue;
+		const void *lo = (const void *) l->l_addr;
+		struct link_map *above = get_lowest_loaded_object_above(
+			(void *) ((uintptr_t) l->l_addr + 1));
+		const void *hi = above ? (const void *) above->l_addr
+		                       : (const void *) (uintptr_t) -1;
+		_Bool have = 0;
+		for (int i = 0; i < nranges; ++i) if (ranges[i].lo == lo) { have = 1; break; }
+		if (!have && nranges < ALASKA_RUNTIME_MAX_RANGES)
+		{
+			ranges[nranges].lo = lo;
+			ranges[nranges].hi = hi;
+			++nranges;
+		}
+	}
+	if (nranges > 0) resolved = 1; /* found it; stop scanning on future calls */
+	for (int i = 0; i < nranges; ++i)
+		if (caller >= ranges[i].lo && caller < ranges[i].hi) return 1;
+	return 0;
+}
+
 static inline struct insert *__generic_malloc_index_insert(
 	struct allocator *a,
 	struct arena_bitmap_info *info,
@@ -337,6 +381,8 @@ static inline struct insert *__generic_malloc_index_insert(
 		 * than b->suballocator->get_size
 		 * because the compiler will know which function it is. */
 {
+	/* Don't instrument the Alaska runtime -- see the comment above. */
+	if (__liballocs_caller_in_alaska_runtime(caller)) return NULL;
 	struct insert *p_insert = NULL;
 	int lock_ret;
 	BIG_LOCK
