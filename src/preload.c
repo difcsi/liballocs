@@ -400,10 +400,15 @@ const char *assertion, const char *file,
 }
 #endif /* NDEBUG */
 
+/* systrap owns SIGILL (it traps syscalls with ud2). Rather than refuse a client's
+ * SIGILL handler, keep ours installed and hand the client's to systrap, which
+ * chains to it for any SIGILL that isn't one of our syscall trap sites. */
+void __systrap_set_sigill_handler(void (*handler)(int, void *, void *));
+
 sighandler_t signal(int signum, sighandler_t handler)
 {
 	static sighandler_t (*orig_signal)(int, sighandler_t);
-	
+
 	sighandler_t ret;
 	if (!orig_signal)
 	{
@@ -413,9 +418,12 @@ sighandler_t signal(int signum, sighandler_t handler)
 
 	if (signum == SIGILL)
 	{
-		debug_printf(0, "Ignoring program's request to install a SIGILL handler.\n");
-		errno = ENOTSUP;
-		ret = SIG_ERR;
+		/* Stash (don't install) the client's SIGILL handler for chaining. */
+		if (handler == SIG_IGN || handler == SIG_DFL)
+			__systrap_set_sigill_handler(NULL);
+		else
+			__systrap_set_sigill_handler((void (*)(int, void *, void *)) handler);
+		ret = SIG_DFL; /* report "no previous handler" */
 	} else ret = orig_signal(signum, handler);
 out:
 	return ret;
@@ -425,22 +433,35 @@ int sigaction(int signum, const struct __libc_sigaction *act,
                      struct __libc_sigaction *oldact)
 {
 	static int (*orig_sigaction)(int, const struct __libc_sigaction *, struct __libc_sigaction *);
-	
+
 	int ret;
 	if (!orig_sigaction)
 	{
 		orig_sigaction = fake_dlsym(RTLD_NEXT, "sigaction");
 		if (!orig_sigaction) abort();
 	}
-	
+
 	if (signum == SIGILL && act != NULL)
 	{
-		debug_printf(0, "Ignoring program's request to install a SIGILL handler.\n");
+		/* Stash (don't install) the client's SIGILL handler for chaining; keep
+		 * systrap's handler installed. The sa_handler/sa_sigaction union is the
+		 * first member of the (here-opaque) struct __libc_sigaction. */
+		void *h = *(void * const *) act;
+		if (h == (void*) 0 /* SIG_DFL */ || h == (void*) 1 /* SIG_IGN */)
+			__systrap_set_sigill_handler(NULL);
+		else
+			__systrap_set_sigill_handler((void (*)(int, void *, void *)) h);
+		/* Report the currently-installed (our) handler as the old one. */
 		ret = orig_sigaction(SIGILL, NULL, oldact);
 	} else ret = orig_sigaction(signum, act, oldact);
 out:
 	return ret;
 }
+
+/* NOTE: keeping SIGILL deliverable is handled at the syscall level in
+ * __systrap_pre_handling (src/systrap.c), which catches all paths; symbol
+ * interposition of pthread_sigmask doesn't (callers reach it via internal
+ * aliases). */
 
 #if 0
 void *memcpy(void *dest, const void *src, size_t n)
