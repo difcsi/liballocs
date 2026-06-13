@@ -26,14 +26,21 @@ jobs:
           command: git submodule update --init --recursive
       - run:
           name: Build submodules
-          command: make -C contrib -j $(nproc)
+          command: make -C contrib -j 2
       - run:
           name: Build project
           command: |
             . contrib/env.sh
             ./autogen.sh
-            ./configure
-            make -j $(nproc)
+            ./configure --enable-lifetime-policies
+            make -j 2
+      #- run: # now our glibc is built with DWARF 5, so don't do this
+      #    name: Create liballocs metadata
+      #    no_output_timeout: 25m
+      #    command: |
+      #      mkdir -p /usr/lib/meta && \
+      #      make -f tools/Makefile.meta \
+      #          $(for libname in `ldd /bin/true | sed -En '/[[:blank:]]*([^[:blank:]]* => )?(.*) \(0x[0-9a-f]+\)/ {s//\2/;p}' | egrep 'libc\.so\.6|ld-linux.*\.so' | xargs readlink -f`; do echo "/usr/lib/meta${libname}-meta.so"; done)
       - persist_to_workspace:
           root: /
           paths: root/project usr/lib/meta
