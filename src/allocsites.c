@@ -95,15 +95,19 @@ static struct allocs_file_metadata *get_file(const void *allocsite)
 {
 	struct big_allocation *file_bigalloc = __lookup_bigalloc_from_root(allocsite,
 		&__static_file_allocator, NULL);
-	assert(file_bigalloc && "queried a wild alloc site, or file bigallocs have not been initialized");
-	struct allocs_file_metadata *file = file_bigalloc->allocator_private;
-	return file;
+	/* A wild alloc site (e.g. garbage metadata read early during init, before file
+	 * bigallocs exist) maps to no file bigalloc. Return NULL rather than deref it;
+	 * callers treat NULL as "no allocsite info". This used to assert, but asserts
+	 * are compiled out in release builds, so the deref was a flaky startup SIGSEGV. */
+	if (!file_bigalloc) return NULL;
+	return file_bigalloc->allocator_private;
 }
 
 struct allocsite_entry *__liballocs_find_allocsite_entry_at(
 	const void *allocsite)
 {
 	struct allocs_file_metadata *file = get_file(allocsite);
+	if (!file) return NULL; /* wild/unknown alloc site -> no entry */
 	uintptr_t allocsite_vaddr = (uintptr_t) allocsite - file->m.l->l_addr;
 	if (!file->allocsites_info) return NULL;
 	struct allocsite_entry *start = file->allocsites_info->ptr;
@@ -122,6 +126,7 @@ struct allocsite_entry *__liballocs_find_allocsite_entry_at(
 allocsite_id_t __liballocs_allocsite_id(const void *allocsite)
 {
 	struct allocs_file_metadata *file = get_file(allocsite);
+	if (!file) return (allocsite_id_t) -1; /* wild/unknown alloc site */
 	struct allocsite_entry *found_entry
 	 = __liballocs_find_allocsite_entry_at(allocsite);
 	if (!found_entry) return (allocsite_id_t) -1;
