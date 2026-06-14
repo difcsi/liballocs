@@ -6,13 +6,10 @@ OCAMLFIND ?= ocamlfind
 ifeq ($(CIL_INSTALL),)
 $(error "Expected CIL_INSTALL to be set")
 endif
-ifeq ($(LIBALLOCS_OCAML_PREFIX),)
-$(error "Expected LIBALLOCS_OCAML_PREFIX to be set")
-endif
 
-export OCAMLPATH := $(LIBALLOCS_OCAML_PREFIX)/lib:$(OCAMLPATH)
+export OCAMLPATH := $(dir $(CIL_INSTALL))$(if $(OCAMLPATH),:$(OCAMLPATH))
 
-CILLY ?= $(CIL_INSTALL)/../bin/cilly
+CILLY ?= $(CIL_INSTALL)/../../bin/cilly
 CIL_TOOLS ?= cilallocs dumpallocs monalloca dumpmemacc trapptrwrites
 OCAMLFLAGS += -package findlib -package goblint-cil
 OCAMLFLAGS += -I $(dir $(THIS_MAKEFILE))/cilallocs
