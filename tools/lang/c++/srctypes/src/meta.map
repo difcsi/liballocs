@@ -1,0 +1,8 @@
+# export only the canonical uniqtype objects;
+# localise the emitter's junk
+{
+  global:
+    __uniqtype__*;
+  local:
+    *;
+};

@@ -30,6 +30,8 @@
 /tools/cufiles
 /tools/dumpptrs
 /tools/*.s
+/tools/lang/c++/srctypes/src/gen-meta
+/tools/lang/c++/srctypes/tests/**/main
 
 /contrib/antlr-3.4-complete.jar
 /contrib/antlr-3.4.tar.gz
