@@ -89,6 +89,16 @@ class AllocsCC(AllocsCompilerWrapper):
         # So, cilly arguments shouldn't be added...!
         if self.onlyPreprocessing():
             return []
+        # Opt-in (ALLOCSCC_TRAP_PTR_WRITES=1): instrument C-side pointer/aggregate
+        # stores with __notify_ptr_write / __notify_copy so liballocs' GC lifetime
+        # extension sees writes the compiler makes (e.g. storing a heap pointer into
+        # a global). Off by default to keep stock allocscc behaviour unchanged.
+        if os.environ.get("ALLOCSCC_TRAP_PTR_WRITES") and len(sourceFiles) > 0 and allSourceFilesAreC:
+            trapPtrWritesArgs = [
+                "--load=%s" % (self.getLibAllocsBaseDir() + "/tools/lang/c/trapptrwrites/trapptrwrites.cmxs"),
+                "--dotrap-ptr-writes"]
+        else:
+            trapPtrWritesArgs = []
         return [
             "--decil",
             #"--native",
@@ -99,6 +109,7 @@ class AllocsCC(AllocsCompilerWrapper):
             "--load=%s" % (self.getLibAllocsBaseDir() + "/tools/lang/c/monalloca/monalloca.cmxs")] + \
             (["--domonalloca"]
                 if len(sourceFiles) > 0 and allSourceFilesAreC else []) + \
+            trapPtrWritesArgs + \
             ["-Wno-unused-variable", "-Wno-unused-label"] + \
             (["--save-temps"] if "CIL_SAVE_TEMPS" in os.environ else [])
         # We need the above -Wno-unused-... because CIL creates

@@ -150,6 +150,14 @@ struct arena_bitmap_info
 {
 	unsigned long nwords;
 	bitmap_word_t *bitmap;
+	/* Parallel to `bitmap`: one byte per MALLOC_ALIGN granule (so
+	 * nwords*BITMAP_WORD_NBITS bytes), holding (caller_usable_size - requested_size)
+	 * for each chunk-start granule. This lets __generic_malloc_get_info report the
+	 * caller's *requested* size -- hence exact heap-array lengths -- without an
+	 * in-chunk extended insert. A byte suffices because the slack is just malloc's
+	 * rounding (plus our trailer); 0 means "no padding recorded" -> fall back to the
+	 * caller-usable size, which is also the value used for pathological slack >255. */
+	unsigned char *padding;
 	void *bitmap_base_addr;
 	pthread_mutex_t mutex;
 	unsigned long bitmap_insert_count;
@@ -281,6 +289,7 @@ static inline struct arena_bitmap_info *ensure_arena_has_info(struct big_allocat
 		arena->suballocator_private_free = __liballocs_free_arena_bitmap_and_info;
 		info->nwords = 0;
 		info->bitmap = NULL;
+		info->padding = NULL;
 		/* Mutex is recursive only because assertion failures sometimes want to do
 		 * asprintf, so try to re-acquire our mutex. */
 		info->mutex = (pthread_mutex_t) PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
@@ -327,6 +336,22 @@ static inline void ensure_has_bitmap_to(struct allocator *a,
 			total_words * sizeof (bitmap_word_t));
 		if (!info->bitmap) abort();
 		bzero(info->bitmap + info->nwords, (total_words - info->nwords) * sizeof (bitmap_word_t));
+		/* Grow the parallel per-granule padding array in lock-step (one byte per
+		 * granule = BITMAP_WORD_NBITS bytes per bitmap word). Done before nwords is
+		 * bumped so the bzero offsets below use the old word count for both arrays.
+		 * NOT for the alloca allocator: it grows its bitmap by PREPENDING (moving
+		 * bitmap_base_addr down, see realloc_bitmap_prepend) so a tail-grown padding
+		 * array can't stay index-aligned with it. alloca chunks therefore keep
+		 * padding==NULL and fall back to the caller-usable size (exact alloca-array
+		 * length isn't needed). */
+		if (a != &__alloca_allocator)
+		{
+			info->padding = __liballocs_private_realloc(info->padding,
+				total_words * BITMAP_WORD_NBITS * sizeof (unsigned char));
+			if (!info->padding) abort();
+			bzero(info->padding + info->nwords * BITMAP_WORD_NBITS,
+				(total_words - info->nwords) * BITMAP_WORD_NBITS * sizeof (unsigned char));
+		}
 		info->nwords = total_words;
 	}
 }
@@ -470,6 +495,18 @@ static inline struct insert *__generic_malloc_index_insert(
 #endif
 	/* Add it to the bitmap. */
 	bitmap_set_l(bitmap, (allocptr - info->bitmap_base_addr) / MALLOC_ALIGN);
+	/* Record this chunk's padding (caller-usable - requested) so get_info can later
+	 * report the exact requested size. ensure_has_bitmap_to() above grew info->padding
+	 * to cover allocptr (except for alloca -- see there -- where it stays NULL). Clamp
+	 * to a byte: requested>usable (shouldn't happen) or slack >255 falls back to
+	 * 0 == "report caller-usable size". */
+	if (info->padding)
+	{
+		unsigned long pad = (caller_requested_size <= caller_usable_size)
+			? (caller_usable_size - caller_requested_size) : 0;
+		if (pad > 255) pad = 0;
+		info->padding[(allocptr - info->bitmap_base_addr) / MALLOC_ALIGN] = (unsigned char) pad;
+	}
 out:
 	BIG_UNLOCK
 	return p_insert;
@@ -669,7 +706,16 @@ struct insert *lookup_object_info_via_bitmap(struct arena_bitmap_info *info,
 	{
 		assert(object_start);
 		if (out_object_start) *out_object_start = object_start;
-		if (out_object_size) *out_object_size = usersize(object_start, sizefn);
+		if (out_object_size)
+		{
+			/* Report the caller's *requested* size, not the (rounded-up) caller-usable
+			 * size, so heap-array lengths are exact. found_bitidx is precisely this
+			 * chunk's granule index, so info->padding[found_bitidx] is its slack. */
+			size_t sz = usersize(object_start, sizefn);
+			unsigned char pad = info->padding ? info->padding[found_bitidx] : 0;
+			if (pad && pad <= sz) sz -= pad;
+			*out_object_size = sz;
+		}
 	}
 	assert(!found_ins || INSERT_DESCRIBES_OBJECT(found_ins));
 	return found_ins;

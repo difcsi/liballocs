@@ -40,6 +40,7 @@ void __free_arena_bitmap_and_info(void *info /* really struct arena_bitmap_info 
 {
 	struct arena_bitmap_info *the_info = info;
 	if (the_info && the_info->bitmap) __private_free(the_info->bitmap);
+	if (the_info && the_info->padding) __private_free(the_info->padding);
 	if (the_info) __private_free(the_info);
 }
 
