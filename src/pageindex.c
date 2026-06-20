@@ -1470,6 +1470,10 @@ _Bool __liballocs_notify_unindexed_address(const void *ptr)
 	if (ret) return 1;
 	ret = __mmap_allocator_notify_unindexed_address(ptr);
 	if (ret) return 1;
+	/* Alaska's backing heap is intentionally not mmap-indexed; claim its pages
+	 * lazily here so queries for halloc'd objects resolve. No-op without Alaska. */
+	ret = __alaska_allocator_notify_unindexed_address(ptr);
+	if (ret) return 1;
 	// FIXME: loop through the others
 	return 0;
 }

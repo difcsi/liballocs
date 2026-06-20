@@ -55,6 +55,15 @@ static inline INSERT_TYPE *get_lifetime_insert_info(const void *obj,
 
 	struct big_allocation *maybe_the_allocation;
 	struct allocator *a = __liballocs_leaf_allocator_for(obj, &maybe_the_allocation);
+	if (!a)
+	{
+		/* The object may live in a lazily-indexed region (e.g. Alaska's heap, which
+		 * is only claimed as a bigalloc on first query). Trigger the same lazy claim
+		 * __liballocs_get_alloc_info does, then retry -- otherwise attaching/detaching
+		 * a policy on a freshly-allocated handle is a silent no-op. */
+		if (__liballocs_notify_unindexed_address(obj))
+			a = __liballocs_leaf_allocator_for(obj, &maybe_the_allocation);
+	}
 	if (!a || !ALLOCATOR_HANDLE_LIFETIME_INSERT(a)) return NULL;
 
 	void *allocstart;
