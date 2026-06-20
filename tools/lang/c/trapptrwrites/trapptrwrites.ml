@@ -105,7 +105,23 @@ let trapPtrWrites file =
           | _ -> tail
       in
 
+      let isMemCopyName n =
+        n = "memcpy" || n = "memmove"
+        || n = "__builtin_memcpy" || n = "__builtin_memmove"
+      in
       match i with
+      (* Explicit memcpy/memmove calls copy aggregate data the compiler can't see
+       * as a typed store, so the generic Set/Call cases below miss them. Emit
+       * __notify_copy(dest, src, n) *after* the copy so liballocs' GC lifetime
+       * extension addrefs any pointer fields that were copied (e.g. bst_copy_node
+       * aliasing a tree node's children -> struct_memcpy_lifetime). Running it
+       * after the copy means the delref of the dest slot's old value is keyed by
+       * the (fresh) dest field address and is a harmless no-op, while the addref
+       * of the copied-in value keeps the pointee alive. *)
+      | Call (ret, (Lval (Var f, NoOffset) as fexp), ([dest; src; n] as args), l)
+          when isMemCopyName f.vname ->
+          ChangeTo [ Call (ret, fexp, args, l);
+                     Call (None, Lval (var notifyCopyFun), [dest; src; n], l) ]
       | Set (lv, _, _, _) | Call (Some lv, _, _, _, _) when not (lvNeedTrapCalls lv) ->
           SkipChildren
       | Set(lv, Lval rv, l, _) ->
