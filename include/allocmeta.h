@@ -444,15 +444,22 @@ extern struct allocator __packed_seq_allocator;
 extern struct allocator __default_lib_malloc_allocator;
 extern struct allocator __global_malloc_allocator;
 extern struct allocator __ld_so_malloc_allocator;
-// FIXME: These are indexes, not allocators
 extern struct allocator __generic_small_allocator; /* usual suballoc impl */
 extern struct allocator __generic_uniform_allocator; /* usual suballoc impl */
+extern struct allocator __alaska_heap_allocator; /* Alaska handle-based backing heap */
+// FIXME: These are indexes, not allocators
 // extern struct allocator __libc_malloc_allocator; // good idea? probably not
 // extern struct allocator __global_obstack_allocator;
 
 // FIXME: we should probably have per-allocator headers for the stuff below
 
-#define ALLOCATOR_HANDLE_LIFETIME_INSERT(a) ((a) == &__default_lib_malloc_allocator)
+/* Allocators that carry a liballocs trailing `struct insert` (and hence a
+ * per-object lifetime-policy mask). The Alaska handle heap reserves room for an
+ * insert at the end of every sized backing object (the stackscan build injects
+ * -DALASKA_LIBALLOCS_INSERT_RESERVE=sizeof(struct insert)), so its objects host a
+ * trailing insert exactly like default-malloc chunks. See src/allocators/alaska.c. */
+#define ALLOCATOR_HANDLE_LIFETIME_INSERT(a) \
+	((a) == &__default_lib_malloc_allocator || (a) == &__alaska_heap_allocator)
 
 size_t __alloca_usable_size(void *ptr);
 
@@ -463,6 +470,18 @@ void __mmap_allocator_notify_mmap(void *ret, void *requested_addr, size_t length
 void __mmap_allocator_notify_mremap(void *ret_addr, void *old_addr, size_t old_size,
 	size_t new_size, int flags, void *new_address, void *caller);
 void __mmap_allocator_notify_munmap(void *addr, size_t length, void *caller);
+
+/* Alaska backing-heap allocator (src/allocators/alaska.c). Claims an Alaska heap
+ * page lazily when a query for an un-indexed backing address arrives; the halloc
+ * index path records/forgets per-object allocsites for type resolution. */
+_Bool __alaska_allocator_notify_unindexed_address(const void *ptr);
+void __alaska_allocator_record_object(void *base, const void *site, unsigned long size);
+void __alaska_allocator_forget_object(void *base);
+/* Called by Alaska's halloc/hfree (weakly) with an object's backing base (and,
+ * on alloc, the caller-requested size), so we can bind/unbind the pending
+ * __current_allocsite and the exact size to that object. */
+void __liballocs_notify_alaska_alloc(void *backing_base, unsigned long requested_size);
+void __liballocs_notify_alaska_free(void *backing_base);
 
 _Bool __mmap_allocator_is_initialized(void) __attribute__((visibility("hidden")));
 _Bool __mmap_allocator_notify_unindexed_address(const void *ptr);
