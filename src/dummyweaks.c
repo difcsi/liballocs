@@ -373,6 +373,15 @@ void __notify_copy(void *dest, const void *src, unsigned long n)
 	 * Also note that in any case, libcrunch will wrap us. */
 }
 
+#ifdef LIFETIME_POLICIES
+void __liballocs_attach_lifetime_policy(int policy_id, const void *obj)
+{
+}
+void __liballocs_detach_lifetime_policy(int policy_id, const void *obj)
+{
+}
+#endif
+
 const char *__liballocs_meta_libfile_name(const char *objname) { return NULL; }
 
 /* GIANT HACK:
