@@ -805,19 +805,12 @@ static void do_mmap(void *mapped_addr, void *requested_addr, size_t requested_le
 		prot, flags, filename, fd, (unsigned long long) offset, format_symbolic_address(caller),
 		reason);
 
-	/* Don't instrument mappings made by Alaska's runtime: registering the bigalloc
-	 * re-enters our allocator, whose arena growth mmaps again and is re-trapped
-	 * here -- an unbounded init-time loop. Treat them as opaque and return. */
-	if (caller)
+	/* Don't index mmaps the Alaska runtime makes for its own use. */
+	if (caller && __alaska_is_runtime_caller(caller))
 	{
-		struct link_map *caller_lm = get_highest_loaded_object_below(caller);
-		if (caller_lm && caller_lm->l_name &&
-				strstr(caller_lm->l_name, "libalaska"))
-		{
-			debug_printf(1, "not instrumenting mmap by Alaska runtime %s (mapped %p, 0x%llx)\n",
-				caller_lm->l_name, mapped_addr, (unsigned long long) requested_length);
-			return;
-		}
+		debug_printf(1, "not instrumenting mmap by Alaska runtime (mapped %p, 0x%llx)\n",
+			mapped_addr, (unsigned long long) requested_length);
+		return;
 	}
 
 	/* The actual length is rounded up to page size. */

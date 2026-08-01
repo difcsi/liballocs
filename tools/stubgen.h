@@ -352,7 +352,10 @@ ALLOC_EVENT(post_successful_alloc)(void *allocptr, size_t modified_size, size_t 
 		ensure_arena_info_for_userptr(&ALLOC_ALLOCATOR_NAME(allocator_namefrag), allocptr), \
 		allocptr /* == userptr */, requested_size, \
 		__current_allocsite ? __current_allocsite : caller, sizefn); \
-	if (initial_lifetime_policies) /* always statically known but we can't #ifdef here */ \
+	/* Alaska-backed chunks (handles: bit 63 set, hence "negative" pointers) \
+	 * must NOT get the default MANUAL policy */
+	if (initial_lifetime_policies /* always statically known but we can't #ifdef here */ \
+			&& !((intptr_t) allocptr < 0)) \
 	{ \
 		INSERT_TYPE *lti = insert_for_chunk(allocptr /* == userptr */, sizefn); \
 		if (lti) lti->common.lifetime_policies |= initial_lifetime_policies; \

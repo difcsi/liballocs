@@ -475,6 +475,9 @@ void __mmap_allocator_notify_munmap(void *addr, size_t length, void *caller);
  * page lazily when a query for an un-indexed backing address arrives; the halloc
  * index path records/forgets per-object allocsites for type resolution. */
 _Bool __alaska_allocator_notify_unindexed_address(const void *ptr);
+/* True if `caller` (a PC) lies in the Alaska runtime's loaded object; lets the mmap
+ * allocator skip indexing mappings the runtime makes for its own use. */
+_Bool __alaska_is_runtime_caller(const void *caller);
 void __alaska_allocator_record_object(void *base, const void *site, unsigned long size);
 void __alaska_allocator_forget_object(void *base);
 /* Called by Alaska's halloc/hfree (weakly) with an object's backing base (and,

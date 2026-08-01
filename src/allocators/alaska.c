@@ -30,6 +30,7 @@
 #include <pthread.h>
 #include <dlfcn.h>
 #include "liballocs_private.h"
+#include "relf.h"   /* fake_dlsym: lock-free symbol lookup (see alaska_resolve_syms) */
 
 /* Alaska runtime exports (rt/liballocs_export.cpp, rt/halloc.cpp). Weak: absent
  * when no Alaska runtime is loaded. */
@@ -39,6 +40,92 @@ extern int            alaska_heap_page_extent(void *backing, void **out_base,
                           unsigned long *out_size) __attribute__((weak));
 extern void          *alaska_translate(void *ptr) __attribute__((weak));
 extern void           alaska_hfree_now(void *ptr) __attribute__((weak));
+extern void          *alaska_heap_start(void) __attribute__((weak));
+extern unsigned long  alaska_heap_size(void)  __attribute__((weak));
+extern void			 *alaska_handle_for(void *ptr) __attribute__((weak));
+/* liballocs is LD_PRELOADed, so it is relocated at process start -- BEFORE libalaska
+ * is dlopened (as a DT_NEEDED of the first Alaska-transformed .so). Its weak
+ * undefined references to the alaska_* symbols above therefore bind to 0 at load and
+ * are never fixed up once libalaska later enters the (global) namespace: every
+ * `&alaska_object_base` etc. stays NULL and the whole allocator silently disables
+ * itself (queries for Alaska backing pointers all abort as "unknown storage"). Fix:
+ * resolve the symbols lazily through dlsym(RTLD_DEFAULT) on first use -- by the time
+ * any backing pointer is queried, libalaska is loaded and in the global scope. If a
+ * weak ref *did* resolve at load (e.g. a non-preload/static link), use it directly. */
+static void          *(*pf_alaska_object_base)(void *);
+static unsigned long  (*pf_alaska_object_size)(void *);
+static int            (*pf_alaska_heap_page_extent)(void *, void **, unsigned long *);
+static void          *(*pf_alaska_heap_start)(void);
+static unsigned long  (*pf_alaska_heap_size)(void);
+static void          *(*pf_alaska_translate)(void *);
+static void           (*pf_alaska_hfree_now)(void *);
+static void           *(*pf_alaska_handle_for)(void *);
+/* alaska::is_initialized() -- reads a plain volatile bool, so it is safe to call at
+ * any moment (even while libalaska is still loading). Called from HERE (the preload)
+ * through a fake_dlsym-resolved pointer -- a direct call, NOT libalaska's lazy PLT --
+ * so it can't crash mid-load the way a cross-DSO PLT call inside libalaska would.
+ * C++ mangled name of `bool alaska::is_initialized(void)`. */
+static _Bool          (*pf_alaska_is_initialized)(void);
+static _Bool alaska_syms_resolved;
+
+/* Resolve a symbol in the global scope WITHOUT taking the dynamic-linker lock.
+ * dlsym() would: liballocs indexes objects as they are loaded, so a metadata query
+ * (which reaches this allocator) can fire while ld.so already holds its load lock --
+ * re-entering it via dlsym deadlocks/crashes. librunt's fake_dlsym walks the link
+ * map directly (and understands ifuncs); it returns (void*)-1 when not found. */
+static void *alaska_lockfree_sym(const char *name)
+{
+	void *s = fake_dlsym(RTLD_DEFAULT, (char *) name);
+	return (s == (void *) -1) ? NULL : s;
+}
+
+static void alaska_resolve_syms(void)
+{
+	if (alaska_syms_resolved) return;
+	if (!pf_alaska_object_base)      pf_alaska_object_base      = &alaska_object_base      ? alaska_object_base      : alaska_lockfree_sym("alaska_object_base");
+	if (!pf_alaska_object_size)      pf_alaska_object_size      = &alaska_object_size      ? alaska_object_size      : alaska_lockfree_sym("alaska_object_size");
+	if (!pf_alaska_heap_page_extent) pf_alaska_heap_page_extent = &alaska_heap_page_extent ? alaska_heap_page_extent : alaska_lockfree_sym("alaska_heap_page_extent");
+	if (!pf_alaska_heap_start)       pf_alaska_heap_start       = &alaska_heap_start       ? alaska_heap_start       : alaska_lockfree_sym("alaska_heap_start");
+	if (!pf_alaska_heap_size)        pf_alaska_heap_size        = &alaska_heap_size        ? alaska_heap_size        : alaska_lockfree_sym("alaska_heap_size");
+	if (!pf_alaska_translate)        pf_alaska_translate        = &alaska_translate        ? alaska_translate        : alaska_lockfree_sym("alaska_translate");
+	if (!pf_alaska_hfree_now)        pf_alaska_hfree_now        = &alaska_hfree_now         ? alaska_hfree_now         : alaska_lockfree_sym("alaska_hfree_now");
+	if (!pf_alaska_handle_for)        pf_alaska_handle_for        = &alaska_handle_for         ? alaska_handle_for         : alaska_lockfree_sym("alaska_handle_for");
+	if (!pf_alaska_is_initialized)   pf_alaska_is_initialized   = alaska_lockfree_sym("_ZN6alaska14is_initializedEv"); // HACK
+	/* Latch only once the symbols the query path needs are in hand. */
+	if (pf_alaska_object_base && pf_alaska_object_size && pf_alaska_heap_page_extent
+			&& pf_alaska_is_initialized)
+		alaska_syms_resolved = 1;
+}
+
+/* Identify the Alaska runtime by its exported-symbol contract rather than its SO
+ * name. Cache libalaska's link_map (the object defining the Alaska exports) and
+ * test a PC by object identity. Robust to renaming/relocation; inert until the
+ * runtime is mapped (its dynsym enters the link map the moment it is). Used by the
+ * mmap allocator to skip indexing mappings the runtime makes for its own use. */
+static struct link_map *alaska_runtime_lm;   /* NULL until identified */
+
+_Bool __alaska_is_runtime_caller(const void *caller)
+{
+	if (!caller) return 0;
+	if (!alaska_runtime_lm)
+	{
+		alaska_resolve_syms();
+		/* Any resolved Alaska export anchors us inside libalaska's mapping. */
+		void *anchor = (void *) pf_alaska_heap_start;
+		if (!anchor) anchor = (void *) pf_alaska_object_base;
+		if (anchor)
+		{
+			struct link_map *lm = get_highest_loaded_object_below(anchor);
+			/* Require a named shared object: in a (non-default) static link the
+			 * anchor lands in the main exe (empty l_name); don't claim that whole
+			 * mapping as "Alaska". Stays inert in that case, like the old check. */
+			if (lm && lm->l_name && lm->l_name[0]) alaska_runtime_lm = lm;
+		}
+		if (!alaska_runtime_lm) return 0;   /* not resolvable yet */
+	}
+	return get_highest_loaded_object_below(caller) == alaska_runtime_lm;
+}
+
 
 #ifdef LIFETIME_POLICIES
 /* Alaska reserves exactly sizeof(struct insert) trailing bytes per sized object
@@ -160,9 +247,10 @@ static _Bool alaska_lookup_object(void *base, const void **out_site, unsigned lo
  * user data -- and the tail is copied with the object when the GC relocates it. */
 static inline struct insert *alaska_lifetime_insert(void *base)
 {
-	if (!&alaska_object_size || !base) return NULL;
-	if (alaska_object_size(base) < sizeof(struct insert)) return NULL;
-	return insert_for_chunk(base, alaska_object_size);
+	alaska_resolve_syms();
+	if (!pf_alaska_object_size || !base) return NULL;
+	if (pf_alaska_object_size(base) < sizeof(struct insert)) return NULL;
+	return insert_for_chunk(base, pf_alaska_object_size);
 }
 
 /* Alaska's native refcount+stackscan is the GC; liballocs need only model it as a
@@ -208,9 +296,35 @@ void __liballocs_notify_alaska_alloc(void *backing_base, unsigned long requested
 #endif
 }
 
+/* Is `base` a huge object? Huge objects live in their own mmap, outside Alaska's
+ * one permanent sized-heap reservation [heap_start, heap_start+heap_size). */
+static _Bool alaska_is_huge_base(void *base)
+{
+	alaska_resolve_syms();
+	if (!pf_alaska_heap_start || !pf_alaska_heap_size) return 0;
+	uintptr_t start = (uintptr_t) pf_alaska_heap_start();
+	if (!start) return 0;
+	uintptr_t b = (uintptr_t) base;
+	return b < start || b >= start + pf_alaska_heap_size();
+}
+
 void __liballocs_notify_alaska_free(void *backing_base)
 {
 	__alaska_allocator_forget_object(backing_base);
+	/* A huge object's backing mmap is handed back to the OS by Alaska right after
+	 * this call (hfree -> huge_allocator.free -> munmap). The bigalloc we lazily
+	 * claimed over that region (see __alaska_allocator_notify_unindexed_address)
+	 * is NOT torn down by liballocs' munmap path -- that only deletes bigallocs
+	 * owned by the mmap allocator, and this one is owned by __alaska_heap_allocator
+	 * -- so it would dangle over an address the kernel may reissue to an unrelated
+	 * mapping. Delete it here. Sized-heap pages are deliberately left claimed: that
+	 * reservation is permanent and its pages are recycled within Alaska. */
+	if (alaska_is_huge_base(backing_base))
+	{
+		struct big_allocation *b =
+			__lookup_bigalloc_from_root(backing_base, &__alaska_heap_allocator, NULL);
+		if (b) __liballocs_delete_bigalloc_at(b->begin, &__alaska_heap_allocator);
+	}
 }
 
 /* ------------------------------------------------------------------------- */
@@ -234,14 +348,16 @@ static liballocs_err_t get_info(void *obj, struct big_allocation *maybe_bigalloc
 	struct uniqtype **out_type, void **out_base,
 	unsigned long *out_size, const void **out_site)
 {
-	if (!&alaska_object_base || !&alaska_object_size || in_alaska_allocator)
+	alaska_resolve_syms();
+	if (!pf_alaska_object_base || !pf_alaska_object_size || in_alaska_allocator
+			|| !pf_alaska_is_initialized || !pf_alaska_is_initialized())
 	{
 		return &__liballocs_err_unindexed_heap_object;
 	}
 	in_alaska_allocator = 1;
 
 	liballocs_err_t err = NULL;
-	void *base = alaska_object_base(obj);
+	void *base = pf_alaska_object_base(obj);
 	if (!base)
 	{
 		/* Not in Alaska's sized heap (e.g. a huge object in a separate mmap). */
@@ -254,7 +370,7 @@ static liballocs_err_t get_info(void *obj, struct big_allocation *maybe_bigalloc
 	const void *site = NULL;
 	unsigned long rec_size = 0;
 	_Bool recorded = alaska_lookup_object(base, &site, &rec_size);
-	unsigned long size = (recorded && rec_size) ? rec_size : alaska_object_size(base);
+	unsigned long size = (recorded && rec_size) ? rec_size : pf_alaska_object_size(base);
 
 	if (out_base) *out_base = base;
 	if (out_size) *out_size = size;
@@ -288,9 +404,46 @@ out:
 
 static unsigned long get_size(void *obj)
 {
-	if (!&alaska_object_base || !&alaska_object_size) return 0;
-	void *base = alaska_object_base(obj);
-	return base ? alaska_object_size(base) : 0;
+	alaska_resolve_syms();
+	if (!pf_alaska_object_base || !pf_alaska_object_size) return 0;
+	void *base = pf_alaska_object_base(obj);
+	return base ? pf_alaska_object_size(base) : 0;
+}
+
+
+// NOT to be confused with hfree
+static void alaska_free(struct allocated_chunk *start)
+{
+	if(pf_alaska_translate && pf_alaska_hfree_now) {
+		if (alaska_is_huge_base(start)) {
+			pf_alaska_hfree_now(start);
+		} else {
+			/**
+			 * The Alaska allocator's free on handles is a no-op.
+			 * Start here is a raw backing pointer base, not a handle. Hfree needs to be called on a handle to work.
+			 * 
+			 * We would have to search the handle table, which is too expensive (and not exposed to us). Instead,
+			 * we choose to live with some garbage temporarily.
+			 * 
+			 * Instead of calling hfree directly, we rely on the Alaska garbage collector to call it for us.
+			 * Whenever Alaska thinks an object is unreachable, it will call hfree on the handle, ignoring lifetime policy flags.
+			 * We then hijack it's hfree call (beloww), and unly actually dispatch to the real hfree if the object has no lp flags
+			 */
+			
+			if(5 <= __liballocs_debug_level) {
+				debug_printf(0, "alaska_free called for chunk at %p\n", (void *) start);
+			} else {
+				void *handle = pf_alaska_handle_for(start);
+				debug_printf(0, "DEBUG MODE WARNING: alaska_free called for handle %p -> %p\n", (void *) handle, (void *) start);
+				// alaska_hfree_now(handle); // HACK: This really shouldn't be triggered on debug level. 
+				
+			}
+		}
+	} else {
+			debug_printf(0, "hfree called for %p but we are not ready yet\n", start);
+			abort();
+	}
+
 }
 
 struct allocator __alaska_heap_allocator = {
@@ -301,6 +454,7 @@ struct allocator __alaska_heap_allocator = {
 	.is_cacheable = 0,
 	.get_info = get_info,
 	.get_size = get_size,
+	.free = alaska_free,
 };
 
 /* ------------------------------------------------------------------------- */
@@ -320,7 +474,30 @@ struct allocator __alaska_heap_allocator = {
 
 _Bool __alaska_allocator_notify_unindexed_address(const void *ptr)
 {
-	if (!&alaska_heap_page_extent) return 0;     /* no Alaska runtime loaded */
+	alaska_resolve_syms();
+	if (!pf_alaska_heap_page_extent) return 0;     /* no Alaska runtime loaded */
+	/* The Alaska runtime may not be up yet: libalaska's symbols enter the link map
+	 * (so fake_dlsym resolves them) the moment it is mapped, but its Runtime/heap are
+	 * constructed later. Calling any heap-touching accessor before then crashes -- and
+	 * liballocs reaches here while libalaska's own segments are still being mmap'd.
+	 * is_initialized() only reads a volatile bool, so it is safe in that window. */
+	if (!pf_alaska_is_initialized || !pf_alaska_is_initialized()) return 0;
+
+	/* liballocs calls us for EVERY unindexed mmap -- library segments, the Python
+	 * heap, anything. Only addresses inside Alaska's reserved sized heap are ours;
+	 * gate on that range up front. This both (a) avoids page_extent's huge-object
+	 * path, which is not robust to arbitrary non-Alaska addresses (it crashed on a
+	 * library mapping), and (b) covers the still-initialising window: heap_start() is
+	 * is_initialized()-gated, returning NULL until the heap is reserved. (Huge Alaska
+	 * objects, which live outside the sized heap, are not claimed here -- acceptable:
+	 * they are rare and simply fall back to "unknown storage".) */
+	{
+		void *hs = pf_alaska_heap_start ? pf_alaska_heap_start() : NULL;
+		unsigned long hz = pf_alaska_heap_size ? pf_alaska_heap_size() : 0;
+		if (!hs || (uintptr_t) ptr < (uintptr_t) hs
+				|| (uintptr_t) ptr >= (uintptr_t) hs + hz)
+			return 0;
+	}
 	/* Don't recurse: a nested query raised while we are already talking to
 	 * Alaska (e.g. Alaska allocating page-table nodes) -- or while we create the
 	 * bigalloc below -- is not ours to claim. Hold the guard across the whole
@@ -331,7 +508,7 @@ _Bool __alaska_allocator_notify_unindexed_address(const void *ptr)
 	_Bool ret = 0;
 	void *page_base = NULL;
 	unsigned long page_size = 0;
-	if (alaska_heap_page_extent((void *) ptr, &page_base, &page_size))
+	if (pf_alaska_heap_page_extent((void *) ptr, &page_base, &page_size))
 	{
 		/* Already claimed (e.g. by an earlier query into the same page)? Then the
 		 * leaf lookup simply hadn't been retried yet; report success. */
@@ -363,33 +540,38 @@ int __liballocs_alaska_manual_pinned(void *base)
 {
 	struct insert *ins = alaska_lifetime_insert(base);
 	if (!ins) return 0;
+	if (getenv("RECLAIM_DEBUG"))
+	{
+		fprintf(stderr, "[pin?] base=%p ins=%p lp=%02x\n",
+			base, (void*) ins, (unsigned) ins->common.lifetime_policies);
+	}
 	return (ins->common.lifetime_policies & MANUAL_DEALLOCATION_FLAG) != 0;
 }
 
-/* Hijack hfree -- Alaska's manual-free entry point -- the way liballocs hijacks
- * free (Bertholon & Kell). Instead of freeing, DETACH the manual policy: the
- * object stays alive (its GC policy bit remains set, so the mask never empties
- * and liballocs' detach never frees here), and the native Alaska GC reclaims it
- * once it is also at refcount 0 and stack-unreachable. Objects we don't manage
- * (huge objects, or no Alaska runtime) get a genuine free. This strong symbol
- * preempts Alaska's own hfree because liballocs is earlier in LD_PRELOAD. */
+/* Hijack hfree 
+ *
+ *
+ * HUGE objects are NOT handles and are NOT GC-managed (Alaska's refcount+stackscan
+ * GC only ever sees handles), so detach-instead-of-free would leak them forever --
+ * hfree is their only deallocator.
+ * 
+ */
 void hfree(void *ptr)
 {
 	if (!ptr) return;
-	if (&alaska_translate && &alaska_object_base)
+	alaska_resolve_syms();
+	if (pf_alaska_translate)
 	{
-		void *base = alaska_translate(ptr);
-		if (base && alaska_object_base(base))
+		void *base = pf_alaska_translate(ptr);
+		if (base != ptr && base)
 		{
+			// We don't protect ourselves from wild hfrees. Calling pf_alaska_object_base(base) to check might be smart
 			__liballocs_detach_lifetime_policy(MANUAL_DEALLOCATION_POLICY, base);
-			return;
 		}
+	} else {
+		debug_printf(0, "ERROR: hfree called but we can't figure out on whether it's a handle or not. We just caused a memory leak\n");
+		abort();
 	}
-	/* Not a lifetime-managed sized Alaska object. */
-	if (&alaska_hfree_now) { alaska_hfree_now(ptr); return; }
-	/* No Alaska runtime at all: chain transparently to the next hfree. */
-	static void (*next_hfree)(void *);
-	if (!next_hfree) next_hfree = (void (*)(void *)) dlsym(RTLD_NEXT, "hfree");
-	if (next_hfree && next_hfree != hfree) next_hfree(ptr);
+	
 }
 #endif
