@@ -353,7 +353,7 @@ ALLOC_EVENT(post_successful_alloc)(void *allocptr, size_t modified_size, size_t 
 		allocptr /* == userptr */, requested_size, \
 		__current_allocsite ? __current_allocsite : caller, sizefn); \
 	/* Alaska-backed chunks (handles: bit 63 set, hence "negative" pointers) \
-	 * must NOT get the default MANUAL policy */
+	 * must NOT get the default MANUAL policy */ \
 	if (initial_lifetime_policies /* always statically known but we can't #ifdef here */ \
 			&& !((intptr_t) allocptr < 0)) \
 	{ \
