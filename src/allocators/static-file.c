@@ -306,6 +306,16 @@ struct big_allocation *plug_hole_or_abort(
 		- (uintptr_t) lowest_containing_mapping_bigalloc->end;
 	char *failure_kind = NULL;
 	if (hole_size > BIGGEST_SANE_USER_ALLOC) { failure_kind = "huge hole"; goto hole_err; }
+	struct mapping_sequence *lower_seq = (struct mapping_sequence *)
+		lowest_containing_mapping_bigalloc->allocator_private;
+	// Skip the plug if there is no actual hole, mmap would fail.
+	if (hole_size == 0)
+	{
+		debug_printf(0, "Mappings of DSO `%s' abut exactly (zero-size hole); "
+			"coalescing without a plug\n", l->l_name);
+	}
+	else
+	{
 	debug_printf(0, "Hole is a workable size (0x%lx), so checking the hole remains free...\n",
 		(unsigned long) hole_size);
 	_Bool hole_free = 1;
@@ -344,8 +354,6 @@ struct big_allocation *plug_hole_or_abort(
 	assert(plug_mapping_bigalloc);
 	assert(plug_mapping_bigalloc == lowest_containing_mapping_bigalloc);
 #endif
-	struct mapping_sequence *lower_seq = (struct mapping_sequence *)
-		lowest_containing_mapping_bigalloc->allocator_private;
 	_Bool did_augment = __augment_mapping_sequence(lower_seq,
 		lowest_containing_mapping_bigalloc->end,
 		highest_containing_mapping_bigalloc->begin,
@@ -355,6 +363,7 @@ struct big_allocation *plug_hole_or_abort(
 		(char*) lower_seq->filename,
 		plug_hole_or_abort);
 	if (!did_augment) { failure_kind = "augmenting mapping sequence"; goto hole_err; }
+	} /* end hole_size != 0 */
 	/* Now we want to coalesce the two now-abutting bigallocs and fix up the mapping
 	 * sequence metadata. We
 	 * - grab the mapping_sequence pointer from the higher-addressed bgialloc
