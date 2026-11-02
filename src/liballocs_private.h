@@ -75,7 +75,7 @@ const char *format_symbolic_address(const void *addr);
 #include "pageindex.h"
 
 /* FIXME: 'mappings' should probably be a flexible array member. */
-#define MAPPING_SEQUENCE_MAX_LEN 8
+#define MAPPING_SEQUENCE_MAX_LEN 32
 struct mapping_sequence
 {
 	void *begin;
