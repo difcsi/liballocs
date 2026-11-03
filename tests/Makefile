@@ -169,6 +169,7 @@ forward-decls \
 metavec-layout \
 meta-dso-stale \
 meta-dso-compact \
+pointer-related \
 packed-seq-walk \
 hello-via-wrapper \
 hello-environ \
