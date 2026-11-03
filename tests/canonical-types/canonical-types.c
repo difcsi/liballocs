@@ -21,6 +21,7 @@ struct pair *new_pair(void);
 struct pair *canon_pair_addr(void);
 int **canon_ptr_addr(void);
 int *canon_local_addr(void);
+double *canon_nosym_addr(void);
 struct pair our_pair = { 3, 4 };
 int *our_ptr = &our_pair.first;
 
@@ -61,7 +62,9 @@ int main(void)
 	/* ... then libcanon's. Its metavector records name its own copies of
 	 * the uniqtypes, so we are checking that they were rewritten to the
 	 * canonical ones. One of each record kind: a dynsym, a dynsym whose
-	 * type is a pointer, and a symtab-only (file-local) symbol. */
+	 * type is a pointer, a symtab-only (file-local) symbol, and a static
+	 * with no ELF symbol at all, which the meta-DSO describes with an
+	 * extrasym. */
 	struct uniqtype *lib_static_t = __liballocs_get_alloc_type(canon_pair_addr());
 	assert(lib_static_t);
 	assert(element_type(lib_static_t) == pair_t);
@@ -72,6 +75,11 @@ int main(void)
 	struct uniqtype *lib_local_t = __liballocs_get_alloc_type(canon_local_addr());
 	assert(lib_local_t);
 	assert(element_type(lib_local_t) == int_t);
+	struct uniqtype *double_t = canonical("__uniqtype__float$$64");
+	struct uniqtype *lib_nosym_t = __liballocs_get_alloc_type(canon_nosym_addr());
+	assert(lib_nosym_t);
+	assert(element_type(lib_nosym_t) == double_t);
+	assert(__liballocs_get_alloc_size(canon_nosym_addr()) == sizeof (double));
 
 	/* Uniqtype-to-uniqtype pointers inside libcanon's own meta-DSO: look up
 	 * its copy of pair there, and check its member type is the canonical int. */
