@@ -197,9 +197,12 @@ else \
 fi
 endef
 
+# Every meta-DSO also gets the metadata ABI version marker from meta-abi.c
+# (see include/meta-abi.h), which liballocs checks before using it.
+META_ABI_SRC := $(dir $(THIS_MAKEFILE))meta-abi.c
 # for debugging, try: @echo all dependencies: $+
-$(META_BASE)/%-meta.so: /% $(call meta_sources,%)
-	$(META_CC) $(META_CFLAGS) -shared $(META_LDFLAGS) -o "$@" $(filter %.c,$+) && \
+$(META_BASE)/%-meta.so: /% $(call meta_sources,%) $(META_ABI_SRC)
+	$(META_CC) $(META_CFLAGS) -I$(LIBALLOCS)/include -shared $(META_LDFLAGS) -o "$@" $(filter %.c,$+) && \
 $(link_under_build_id)
 
 SWAP_STDOUT_STDERR := 3>&2 2>&1 1>&3
