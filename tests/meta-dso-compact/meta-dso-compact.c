@@ -10,15 +10,17 @@
 #include <dlfcn.h>
 #include "allocs.h"
 #include "allocmeta.h"
+#include "meta-abi.h"
 
 /* Meta-DSOs are linked to be compact (see tools/Makefile.meta and
  * GitHub issue #12): no static symbol table, only the GNU-style
  * hash table. Check that, and that everything we need from a
  * meta-DSO still works without them. */
 
-/* Make sure our meta-DSO defines uniqtypes for int and int*. */
+/* Make sure our meta-DSO defines uniqtypes for int, int* and a struct. */
 int an_int = 42;
 int *a_ptr = &an_int;
+struct two_ints { int first; int second; } a_pair = { 1, 2 };
 
 static struct uniqtype *int_t;
 static _Bool saw_int_t;
@@ -42,6 +44,11 @@ int main(void)
 	struct allocs_file_metadata *meta = file_metadata;
 	struct link_map *l = meta->meta_obj_handle;
 	assert(l);
+
+	/* It must carry the metadata ABI version we were built against. */
+	const unsigned *p_version = dlsym(l, LIBALLOCS_META_ABI_VERSION_SYMBOL);
+	assert(p_version);
+	assert(*p_version == LIBALLOCS_META_ABI_VERSION);
 
 	/* Only the GNU-style hash table should be present. */
 	_Bool have_gnu_hash = 0, have_sysv_hash = 0;
@@ -71,7 +78,17 @@ int main(void)
 	assert(ntypes > 0);
 	assert(saw_int_t);
 
-	/* No static symbol table on disk. */
+	/* Subobject names are reached from the composite's related[] entry,
+	 * not by symbol, so no *_subobj_names array should be exported. */
+	struct uniqtype *pair_t = dlsym(l, "__uniqtype__two_ints");
+	assert(pair_t);
+	assert(UNIQTYPE_IS_COMPOSITE_TYPE(pair_t));
+	const char **names = UNIQTYPE_COMPOSITE_SUBOBJ_NAMES(pair_t);
+	assert(names && names[0] && names[1] && !names[2]);
+	assert(0 == strcmp(names[0], "first"));
+	assert(0 == strcmp(names[1], "second"));
+
+	/* No static symbol table on disk, and no exported *_subobj_names. */
 	assert(l->l_name && l->l_name[0]);
 	int fd = open(l->l_name, O_RDONLY);
 	assert(fd != -1);
@@ -86,6 +103,25 @@ int main(void)
 	for (unsigned i = 0; i < ehdr.e_shnum; ++i)
 	{
 		assert(shdrs[i].sh_type != SHT_SYMTAB);
+		if (shdrs[i].sh_type != SHT_DYNSYM) continue;
+		ElfW(Shdr) *strsh = &shdrs[shdrs[i].sh_link];
+		char *dynstr = malloc(strsh->sh_size);
+		ElfW(Sym) *dynsym = malloc(shdrs[i].sh_size);
+		assert(dynstr && dynsym);
+		assert(lseek(fd, strsh->sh_offset, SEEK_SET) != -1);
+		assert(read(fd, dynstr, strsh->sh_size) == (ssize_t) strsh->sh_size);
+		assert(lseek(fd, shdrs[i].sh_offset, SEEK_SET) != -1);
+		assert(read(fd, dynsym, shdrs[i].sh_size) == (ssize_t) shdrs[i].sh_size);
+		for (unsigned j = 0; j < shdrs[i].sh_size / sizeof (ElfW(Sym)); ++j)
+		{
+			const char *name = dynstr + dynsym[j].st_name;
+			size_t len = strlen(name);
+			const char suffix[] = "_subobj_names";
+			assert(len < sizeof suffix - 1
+				|| 0 != strcmp(name + len - (sizeof suffix - 1), suffix));
+		}
+		free(dynstr);
+		free(dynsym);
 	}
 	free(shdrs);
 	close(fd);
