@@ -49,15 +49,15 @@ int main(void)
 	struct liballocs_err *err = __liballocs_get_alloc_info(head, &a,
 			&alloc_start, &alloc_size_bytes, &list_node_t, /* alloc site */NULL);
 	assert(list_node_t);
-	if (list_node_t->make_precise)
+	if (UNIQTYPE_IS_ABSTRACT(list_node_t))
 	{
 		// HACK: make_precise is sanity-checking that we get a multiple of 
 		// list_node's size, even though we don't because we get some malloc
 		// padding. it should know that we only allocated 1. 
 		// Kludge the range length for now.
-		list_node_t = list_node_t->make_precise(list_node_t, NULL, 0, head, alloc_start,
+		list_node_t = UNIQTYPE_MAKE_PRECISE_FN(list_node_t)(list_node_t, NULL, 0, head, alloc_start,
 			/*alloc_size_bytes*/ sizeof (struct list_node), NULL, NULL);
-		assert(!list_node_t->make_precise);
+		assert(!UNIQTYPE_IS_ABSTRACT(list_node_t));
 	}
 	
 	/* Use our uniqtype bfs walker to walk the list. */

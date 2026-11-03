@@ -170,6 +170,7 @@ metavec-layout \
 meta-dso-compact \
 meta-dso-stale \
 pointer-related \
+uniqtype-layout \
 packed-seq-walk \
 hello-via-wrapper \
 hello-environ \

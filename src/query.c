@@ -114,11 +114,12 @@ __liballocs_get_inner_type(void *obj, unsigned skip_at_bottom)
 	
 	if (__builtin_expect(err != NULL, 0)) goto failed;
 	unsigned target_offset_within_uniqtype = (char*) obj - (char*) alloc_start;
-	if (u->make_precise)
+	make_precise_fn_t *make_precise = UNIQTYPE_MAKE_PRECISE_FN(u);
+	if (make_precise)
 	{
 		/* FIXME: should really do a fuller treatment of make_precise, to allow e.g. */
 		/* returning a fresh uniqtype into a buffer, and (even) passing mcontext. */
-		u = u->make_precise(u,
+		u = make_precise(u,
 			NULL, 0,
 			(void*) obj, (void*) alloc_start, alloc_size_bytes, __builtin_return_address(0),
 			NULL);
@@ -252,7 +253,8 @@ int __liballocs_add_type_to_block(void *block, struct uniqtype *t)
 	 * get_info really wants the bigalloc. */
 	liballocs_err_t err = a->get_info(block, b, &old_type, &base, &sz, NULL);
 	if (!old_type) return 2;
-	if (old_type->make_precise) old_type = old_type->make_precise(old_type,
+	make_precise_fn_t *make_precise = UNIQTYPE_MAKE_PRECISE_FN(old_type);
+	if (make_precise) old_type = make_precise(old_type,
 		NULL, 0, block, block, sz, __builtin_return_address(0), NULL);
 	struct uniqtype *new_type = __liballocs_get_or_create_array_type(t, sz / t->pos_maxoff);
 	if (!new_type) return 3;

@@ -66,7 +66,6 @@ get_or_create_array_type(struct uniqtype *element_t, unsigned array_len)
 				.nelems = array_len
 			}
 		},
-		.make_precise = NULL
 	};
 	allocated_uniqtype->related[0] = (struct uniqtype_rel_info) {
 		.un = {
@@ -128,7 +127,6 @@ __liballocs_get_or_create_flexible_array_type(struct uniqtype *element_t)
 				.nelems = UNIQTYPE_ARRAY_LENGTH_UNBOUNDED
 			}
 		},
-		.make_precise = __liballocs_make_array_precise_with_memory_bounds
 	};
 	allocated_uniqtype->related[0] = (struct uniqtype_rel_info) {
 		.un = {
@@ -185,7 +183,6 @@ __liballocs_get_or_create_address_type(const struct uniqtype *pointee_t)
 				.genericity = 0,
 			}
 		},
-		.make_precise = NULL
 	};
 	allocated_uniqtype->related[0] = (struct uniqtype_rel_info) {
 		.un = { t: { .ptr = (struct uniqtype *) pointee_t } }
@@ -241,7 +238,6 @@ __liballocs_get_or_create_subprogram_type(struct uniqtype *return_type, unsigned
 				.cc = 0, // What is the good calling convention choice ?
 			}
 		},
-		.make_precise = NULL,
 	};
 	allocated_uniqtype->related[0] = (struct uniqtype_rel_info) {
 		.un = {
@@ -349,7 +345,6 @@ __liballocs_get_or_create_union_type(unsigned n, /* struct uniqtype *first_memb_
 				.not_simultaneous = 0
 			}
 		},
-		.make_precise = NULL
 	};
 	for (unsigned i = 0; i < n; ++i)
 	{
