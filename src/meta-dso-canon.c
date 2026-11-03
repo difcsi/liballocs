@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <stddef.h>
 #include <link.h>
 #include <dlfcn.h>
@@ -94,6 +95,8 @@ static void canonicalise_uniqtype(struct uniqtype *u, ElfW(Sym) *s,
 
 void canonicalise_meta_dso(struct link_map *l)
 {
+	struct timespec t_start;
+	clock_gettime(CLOCK_MONOTONIC, &t_start);
 	ElfW(Sym) *dynsym = get_dynsym(l);
 	unsigned char *dynstr = get_dynstr(l);
 	unsigned long nsyms = dynamic_symbol_count(l->l_ld, l);
@@ -158,7 +161,10 @@ void canonicalise_meta_dso(struct link_map *l)
 			}
 		}
 	}
-	debug_printf(3, "canonicalised meta-DSO %s: %u of %u uniqtype definitions were duplicates\n",
-		l->l_name, nmap, ndefs);
+	struct timespec t_end;
+	clock_gettime(CLOCK_MONOTONIC, &t_end);
+	debug_printf(3, "canonicalised meta-DSO %s: %u of %u uniqtype definitions were duplicates (%ld us)\n",
+		l->l_name, nmap, ndefs,
+		(long) ((t_end.tv_sec - t_start.tv_sec) * 1000000L + (t_end.tv_nsec - t_start.tv_nsec) / 1000));
 	__private_free(map);
 }
