@@ -106,7 +106,9 @@ struct allocsite_entry *__liballocs_find_allocsite_entry_at(
 	struct allocs_file_metadata *file = get_file(allocsite);
 	if (!file) return NULL;
 	uintptr_t allocsite_vaddr = (uintptr_t) allocsite - file->m.l->l_addr;
-	if (!file->allocsites_info) return NULL;
+	/* An object may have an empty allocsites table (nothing in it allocates);
+	 * the binary search below aborts on an empty array. */
+	if (!file->allocsites_info || file->allocsites_info->count == 0) return NULL;
 	struct allocsite_entry *start = file->allocsites_info->ptr;
 	/* Now we do a binary search inside the allocsites array. */
 #define proj(p) ((p)->allocsite_vaddr)
