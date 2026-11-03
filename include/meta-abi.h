@@ -9,7 +9,7 @@
  * Bump it whenever the layout of anything in a meta-DSO changes: uniqtypes
  * (contrib/liballocstool's uniqtype-defs.h and what its generator emits),
  * allocsites, the metavector, frame info, extrasyms. */
-#define LIBALLOCS_META_ABI_VERSION 2
+#define LIBALLOCS_META_ABI_VERSION 3
 #define LIBALLOCS_META_ABI_VERSION_SYMBOL "__liballocs_meta_abi_version"
 
 #endif

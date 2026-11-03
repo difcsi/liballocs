@@ -152,6 +152,9 @@ int load_and_init_all_metadata_for_one_object(struct dl_phdr_info *info, size_t 
 		free(symlink_path);
 		return 0;
 	}
+	/* Meta-DSOs bind their own uniqtype references locally; make every
+	 * uniqtype pointer in this one refer to the canonical object. */
+	canonicalise_meta_dso(meta_l);
 	debug_printf(3, "dlopened meta-DSO: %s (as %s)\n", libfile_name, symlink_path);
 	__private_free(libfile_name);
 	free(symlink_path);

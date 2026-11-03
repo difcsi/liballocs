@@ -220,6 +220,7 @@ struct load_and_init_all_metadata_args
 int load_and_init_all_metadata_for_one_object(struct dl_phdr_info *info, size_t size, void *inout_args);
 
 int find_and_open_meta_libfile(struct allocs_file_metadata *meta) __attribute__((visibility("hidden")));
+void canonicalise_meta_dso(struct link_map *l) __attribute__((visibility("hidden")));
 
 void __notify_copy(void *dest, const void *src, unsigned long n);
 void __notify_free(void *dest);

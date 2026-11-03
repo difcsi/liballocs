@@ -66,7 +66,9 @@ int main(void)
 	assert(0 == strcmp(UNIQTYPE_NAME(int_t), "int$$32"));
 	struct uniqtype *ptr_int_t = dlsym(l, "__uniqtype____PTR_int$$32");
 	assert(ptr_int_t);
-	assert(UNIQTYPE_POINTEE_TYPE(ptr_int_t) == int_t);
+	/* ... which points at the canonical int, i.e. the first definition in
+	 * global scope, not necessarily this meta-DSO's own copy. */
+	assert(UNIQTYPE_POINTEE_TYPE(ptr_int_t) == dlsym(RTLD_DEFAULT, "__uniqtype__int$$32"));
 
 	/* Iterating types has to count dynsyms without a SysV hash table.
 	 * (The preload defines this; the link-time stubs don't, so look it up.) */
