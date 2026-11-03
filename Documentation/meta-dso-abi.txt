@@ -1,0 +1,112 @@
+The metadata ABI of meta-DSOs
+=============================
+
+A meta-DSO (/usr/lib/meta/<path-of-binary>-meta.so; see
+overview-toolchain.txt) is an ordinary shared object that liballocs
+dlopens. Everything liballocs takes from it is found by symbol name, and
+the layout of what those symbols denote is the "metadata ABI". The two
+readers are liballocs itself (src/meta-dso-util.c loads a meta-DSO;
+src/allocators/*.c and src/allocsites.c consume it) and allocsld
+(allocsld/allocinstr.c reads only the extrasyms, without relocating
+the file).
+
+Versioning
+----------
+
+Every meta-DSO carries the object __liballocs_meta_abi_version
+(tools/meta-abi.c, linked in by tools/Makefile.meta), holding the
+value of LIBALLOCS_META_ABI_VERSION from include/meta-abi.h at the time
+the meta-DSO was built. A reader built with a different value declines
+to use the meta-DSO, as it does for one that has no such symbol at all
+(i.e. predates versioning); liballocs reports this on stderr and then
+behaves as if the meta-DSO did not exist, so queries about that object
+fail rather than return garbage. The remedy is to rebuild the
+meta-DSO, e.g.
+
+    make -f tools/Makefile.meta /usr/lib/meta/<path-of-binary>-meta.so
+
+or, for everything already under /usr/lib/meta,
+
+    make -f tools/Makefile.meta
+
+Bump the version whenever the layout of anything in a meta-DSO changes.
+So far:
+
+1  the version marker itself. Pointer uniqtypes of degree 1 carry a
+   single 'related' entry, their pointee (earlier generators emitted a
+   second, empty entry). Not a reader-visible change, so not a bump.
+
+2  struct uniqtype has an 8-byte header: the 'cache_word' and the
+   per-uniqtype 'make_precise' pointer are gone (the only abstract
+   kind is the unbounded array, and UNIQTYPE_MAKE_PRECISE_FN handles
+   it). Subobject-name arrays (*_subobj_names) are no longer exported
+   symbols; they are reached only through the composite's own
+   'related' entries (UNIQTYPE_COMPOSITE_SUBOBJ_NAMES).
+
+3  meta-DSOs are linked -Bsymbolic, so uniqtype-to-uniqtype pointers
+   within one meta-DSO bind at link time. After loading, liballocs
+   rewrites every such pointer (in uniqtypes, allocsites, frame info
+   and metavector records) to the canonical uniqtype, i.e. the
+   definition found by a global symbol lookup; src/meta-dso-canon.c.
+   Metavector records therefore live in .data.
+
+4  metavector record kinds are renumbered so that no symbol kind sets
+   bit 0, which is the reloc-only flag (allocmeta-defs.h in
+   liballocstool); REC_EXTRASYM used to collide with it.
+
+What a meta-DSO must define
+---------------------------
+
+__liballocs_meta_abi_version   as above
+
+__uniqtype_<code>_<name>       one struct uniqtype per type, where
+                               <code> is the 8-hex-digit summary code
+                               of the type's structure. The definition
+                               is in a COMDAT group named after it, so
+                               that identical types merge at link time
+                               when meta-objects are linked together.
+__uniqtype__<name>             a 1-byte alias naming the codeful one;
+                               what clients normally look up.
+                               Both forms are part of liballocs's
+                               public interface.
+
+allocsites                     the allocation-site table, an array of
+                               struct allocsite_entry sorted by site
+                               address; its length comes from the
+                               symbol's st_size. See
+                               include/allocsites.h, src/allocsites.c
+
+frame_vaddrs                   the stack-frame layout table, an array
+                               of struct frame_allocsite_entry, again
+                               sized by st_size; see tools/frametypes.cpp
+                               and src/allocators/stackframe.c
+
+metavec_0x<vaddr>              one array of union sym_or_reloc_rec per
+                               LOAD segment, named by the segment's
+                               p_vaddr, sorted by address; see
+                               static-symbols.txt. Each record is one
+                               word; bit 0 set means a reloc-only
+                               record (base vaddr and size packed in
+                               the word); otherwise the low 3 bits are
+                               the kind (which symbol table the entry
+                               is in), bits 3..46 the uniqtype's
+                               address without its low 3 bits, and the
+                               top 17 bits the symbol index.
+bitmap_0x<vaddr>               the matching "starts" bitmap
+
+extrasyms, extrastr            an ELF symbol table and string table of
+                               statics that DWARF describes but no
+                               symbol in the binary does (or only a
+                               zero-sized one)
+
+Compactness
+-----------
+
+Meta-DSOs are pointer-dense, so symbol tables, string tables and
+relocations dominate their size (GitHub issue #12). tools/Makefile.meta
+links them with META_LDFLAGS, by default: stripped (-s; everything is
+in .dynsym anyway), GNU hash only, -Bsymbolic (see version 3 above),
+and, where the toolchain and libc support them, -z noseparate-code and
+-z pack-relative-relocs (DT_RELR). Each -z option is probed first,
+since linkers other than GNU ld reject unknown ones. Set META_LDFLAGS
+to override the whole set, e.g. to keep a symbol table for debugging.
