@@ -47,8 +47,10 @@ So far:
    within one meta-DSO bind at link time. After loading, liballocs
    rewrites every such pointer (in uniqtypes, allocsites, frame info
    and metavector records) to the canonical uniqtype, i.e. the
-   definition found by a global symbol lookup; src/meta-dso-canon.c.
-   Metavector records therefore live in .data.
+   first definition loaded (src/uniqtype-registry.c keeps track;
+   src/meta-dso-canon.c rewrites). Metavector records therefore live in
+   .data, and a meta-DSO is never unmapped once loaded (RTLD_NODELETE),
+   since others may point into it.
 
 4  metavector record kinds are renumbered so that no symbol kind sets
    bit 0, which is the reloc-only flag (allocmeta-defs.h in
