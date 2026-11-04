@@ -221,6 +221,13 @@ int load_and_init_all_metadata_for_one_object(struct dl_phdr_info *info, size_t 
 
 int find_and_open_meta_libfile(struct allocs_file_metadata *meta) __attribute__((visibility("hidden")));
 void canonicalise_meta_dso(struct link_map *l) __attribute__((visibility("hidden")));
+/* The registry of canonical uniqtypes (src/uniqtype-registry.c), keyed by
+ * codeful symbol name: register a definition and get the canonical one back
+ * (the first registered, i.e. first loaded, which may be this one). */
+struct uniqtype *__liballocs_uniqtype_registry_register(const char *name, struct uniqtype *u) __attribute__((visibility("hidden")));
+struct uniqtype *__liballocs_uniqtype_registry_lookup(const char *name) __attribute__((visibility("hidden")));
+_Bool __liballocs_uniqtype_sym_is_uniqtype(ElfW(Sym) *s, const char *name) __attribute__((visibility("hidden")));
+_Bool __liballocs_uniqtype_sym_is_definition(ElfW(Sym) *s, const char *name) __attribute__((visibility("hidden")));
 
 void __notify_copy(void *dest, const void *src, unsigned long n);
 void __notify_free(void *dest);

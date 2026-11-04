@@ -17,12 +17,12 @@
  * of the symbol in global scope -- which is what made structurally identical
  * types (same summary code, hence same codeful symbol name) one object across
  * meta-DSOs. We restore that here: after loading a meta-DSO we find which of
- * its uniqtype definitions are not the first in link-map order (executable,
- * its libraries, earlier meta-DSOs...), and rewrite every uniqtype pointer the
- * meta-DSO holds -- in its uniqtypes' related[] entries, its allocsites and
- * frame_vaddrs tables, and its metavector records -- to the canonical object.
- * Duplicate objects stay in place (dlsym on the meta-DSO still finds them) but
- * everything they point to is canonical too. */
+ * its uniqtype definitions are duplicates of ones registered earlier (see
+ * src/uniqtype-registry.c: first loaded wins), and rewrite every uniqtype
+ * pointer the meta-DSO holds -- in its uniqtypes' related[] entries, its
+ * allocsites and frame_vaddrs tables, and its metavector records -- to the
+ * canonical object. Duplicate objects stay in place (dlsym on the meta-DSO
+ * still finds them) but everything they point to is canonical too. */
 
 struct canon_pair { struct uniqtype *own; struct uniqtype *canonical; };
 
@@ -67,14 +67,6 @@ static struct uniqtype *canonical_of(struct canon_pair *map, unsigned n, struct 
 	return p;
 }
 
-static _Bool is_uniqtype_definition(ElfW(Sym) *s, const char *name)
-{
-	return ELF64_ST_TYPE(s->st_info) == STT_OBJECT
-		&& s->st_shndx != SHN_UNDEF
-		&& s->st_size > 1 /* aliases are 1 byte long */
-		&& 0 == strncmp(name, "__uniqtype_", sizeof "__uniqtype_" - 1);
-}
-
 static void canonicalise_uniqtype(struct uniqtype *u, ElfW(Sym) *s,
 	struct canon_pair *map, unsigned nmap)
 {
@@ -109,11 +101,15 @@ void canonicalise_meta_dso(struct link_map *l)
 	{
 		ElfW(Sym) *s = &dynsym[i];
 		const char *name = (const char *) dynstr + s->st_name;
-		if (!is_uniqtype_definition(s, name)) continue;
-		++ndefs;
+		if (!__liballocs_uniqtype_sym_is_uniqtype(s, name)) continue;
+		/* Register every name, aliases included; but only definitions can
+		 * be duplicates needing a map entry (an alias's object is handled
+		 * under its own, codeful name). */
 		struct uniqtype *own = (struct uniqtype *) (l->l_addr + s->st_value);
-		void *canonical = fake_dlsym(RTLD_DEFAULT, name);
-		if (!canonical || canonical == (void*) -1 || canonical == own) continue;
+		struct uniqtype *canonical = __liballocs_uniqtype_registry_register(name, own);
+		if (!__liballocs_uniqtype_sym_is_definition(s, name)) continue;
+		++ndefs;
+		if (canonical == own) continue;
 		map[nmap++] = (struct canon_pair) { own, canonical };
 	}
 	if (nmap > 0)
@@ -123,7 +119,7 @@ void canonicalise_meta_dso(struct link_map *l)
 		{
 			ElfW(Sym) *s = &dynsym[i];
 			const char *name = (const char *) dynstr + s->st_name;
-			if (is_uniqtype_definition(s, name))
+			if (__liballocs_uniqtype_sym_is_definition(s, name))
 			{
 				canonicalise_uniqtype((struct uniqtype *) (l->l_addr + s->st_value), s, map, nmap);
 			}
