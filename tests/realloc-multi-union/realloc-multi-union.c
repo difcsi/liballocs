@@ -29,13 +29,13 @@ int main(void)
 	assert(p);
 	struct uniqtype *old_type = __liballocs_get_alloc_type(p);
 	assert(old_type);
-	if (old_type->make_precise) old_type = old_type->make_precise(old_type,
+	if (UNIQTYPE_IS_ABSTRACT(old_type)) old_type = UNIQTYPE_MAKE_PRECISE_FN(old_type)(old_type,
 		NULL, 0, p, p, __liballocs_get_alloc_size(p), __builtin_return_address(0), NULL);
 	assert(old_type);
 	short *sp = realloc(p, 4 * sizeof(short));
 	struct uniqtype *new_type = __liballocs_get_alloc_type(p);
 	assert(new_type);
-	if (new_type->make_precise) new_type = new_type->make_precise(new_type,
+	if (UNIQTYPE_IS_ABSTRACT(new_type)) new_type = UNIQTYPE_MAKE_PRECISE_FN(new_type)(new_type,
 		NULL, 0, sp, sp, __liballocs_get_alloc_size(sp), __builtin_return_address(0), NULL);
 	assert(new_type);
 	struct uniqtype *union_type = __liballocs_get_or_create_union_type(2,
