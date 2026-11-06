@@ -385,11 +385,13 @@ generate_recs(sticky_root_die& root)
 			expected_size);
 		if (summary.k == REC_EXTRASYM)
 		{
-			++extrasym_idx; // HACK: we hope this stays in sync with the actual extrasyms table
+			/* The extrasyms table (sticky_root_die::get_extrasyms) has a null
+			 * entry at index 0 and then these statics in this same order, so
+			 * the first extrasym is at index 1. */
 			sym_or_reloc_rec_to_generate rec = {
 				/* kind */ REC_EXTRASYM,
 				/* priority kind */ summary.descr_priority_k,
-				/* idx_in_per_kind_table */ extrasym_idx,
+				/* idx_in_per_kind_table */ extrasym_idx++,
 				/* maybe_uniqtype */ i_static->second.get_type() ?
 					opt<codeful_name>(codeful_name(summary.t))
 					: opt<codeful_name>(),

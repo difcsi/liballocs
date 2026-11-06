@@ -230,7 +230,7 @@ static void load_metadata(struct allocs_file_metadata *meta, void *handle)
 		load_and_init_all_metadata_for_one_object, &args);
 	meta->meta_obj_handle = args.out_handle;
 	// meta_obj_handle may be null -- we continue either way
-	meta->extrasym = (meta->meta_obj_handle ? dlsym(meta->meta_obj_handle, "extrasym") : NULL);
+	meta->extrasym = (meta->meta_obj_handle ? dlsym(meta->meta_obj_handle, "extrasyms") : NULL);
 	meta->extrastr = (meta->meta_obj_handle ? dlsym(meta->meta_obj_handle, "extrastr") : NULL);
 	/* We still haven't filled in everything... */
 	init_allocsites_info(meta);
