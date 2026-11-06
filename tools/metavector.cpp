@@ -470,7 +470,9 @@ void output_one_segment_metavec(int idx, ElfW(Phdr) *ph,
 	cout << "// metavector for segment " << idx << " spanning 0x" << std::hex << base_addr
 		<< " to 0x" << limit_addr << std::dec << std::endl;
 	// cout << "unsigned long metavec_0x" << std::hex << base_addr << std::dec << "[] = {" << std::endl;
-	cout << "__asm__(\".pushsection .rodata \\n\\" << std::endl;
+	/* Writable: liballocs rewrites the uniqtype pointers in these records when
+	 * it canonicalises the meta-DSO (and this also avoids DT_TEXTREL). */
+	cout << "__asm__(\".pushsection .data \\n\\" << std::endl;
 	cout << ".globl metavec_0x" << std::hex << base_addr << std::dec << " \\n\\" << std::endl;
 	cout << "metavec_0x" << std::hex << base_addr << std::dec << ":\\n\\" << std::endl;
 	unsigned nrec = 0;

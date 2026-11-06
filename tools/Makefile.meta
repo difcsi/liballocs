@@ -51,7 +51,9 @@ meta_try_zflag = $(shell echo 'int x;' | $(META_CC) -shared -fPIC -x c - -o /dev
 # Packed relative relocs need linker support *and* a libc that declares GLIBC_ABI_DT_RELR, otherwise an older ld.so silently leaves them unapplied.
 meta_relr_probe = $(shell t=$$(mktemp) && echo 'int x;' | $(META_CC) -shared -fPIC -x c - -o $$t -Wl,--no-as-needed -Wl,-z,pack-relative-relocs 2>/dev/null && readelf -V $$t 2>/dev/null | grep -q GLIBC_ABI_DT_RELR && echo '-Wl,-z,pack-relative-relocs'; rm -f $$t)
 META_LDFLAGS_RELR ?= $(call meta_relr_probe)
-META_LDFLAGS ?= -Wl,-s -Wl,--hash-style=gnu $(call meta_try_zflag,noseparate-code) $(META_LDFLAGS_RELR)
+# -Bsymbolic: references between this meta-DSO's own uniqtypes bind at link
+# time (relative relocs, RELR-packed) instead of via a symbolic dynamic reloc
+META_LDFLAGS ?= -Wl,-s -Wl,--hash-style=gnu -Wl,-Bsymbolic $(call meta_try_zflag,noseparate-code) $(META_LDFLAGS_RELR)
 
 # By default, remake everything we have already made,
 # but don't make new .allocsites files.
