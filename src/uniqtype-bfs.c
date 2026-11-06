@@ -182,7 +182,7 @@ static void build_adjacency_list_recursive(
 {
 	if (t_at_offset == pointer_to___uniqtype__void) return;
 
-	assert(!t_at_offset->make_precise);
+	assert(!UNIQTYPE_IS_ABSTRACT(t_at_offset));
 	
 	fprintf(stderr, "Descending through subobjects of object at %p, "
 		"currently at subobject offset %ld of type %s\n",

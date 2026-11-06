@@ -15,16 +15,17 @@ int main(void)
 	 * for a 1-element array. */
 	struct xyzzy *z = malloc(sizeof (struct xyzzy));
 	struct uniqtype *imprecise = __liballocs_get_alloc_type(z);
-	assert(imprecise->make_precise);
+	make_precise_fn_t *make_precise = UNIQTYPE_MAKE_PRECISE_FN(imprecise);
+	assert(make_precise);
 			
-	struct uniqtype *precise = imprecise->make_precise(
+	struct uniqtype *precise = make_precise(
 		imprecise, NULL, 0,
 		&x, &x, sizeof x, NULL, NULL);
 	printf("We got back: %s\n", UNIQTYPE_NAME(precise));
 	
 	/* Now call it again: we should get the same pointer, not another
 	 * copy of the uniqtype. */
-	struct uniqtype *precise2 = imprecise->make_precise(
+	struct uniqtype *precise2 = make_precise(
 		imprecise, NULL, 0,
 		&x, &x, sizeof x, NULL, NULL);
 	
