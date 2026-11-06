@@ -172,6 +172,7 @@ meta-dso-compact \
 pointer-related \
 uniqtype-layout \
 canonical-types \
+dlopen-statics \
 packed-seq-walk \
 hello-via-wrapper \
 hello-environ \
