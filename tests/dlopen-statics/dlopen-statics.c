@@ -40,5 +40,15 @@ int main(void)
 
 	printf("dlopen'd statics: pair is %s, local int is %s\n",
 		UNIQTYPE_NAME(element_type(pair_t)), UNIQTYPE_NAME(element_type(local_t)));
+
+	/* Unloading the library must not unmap its meta-DSO: a uniqtype is one
+	 * object for the whole process, so other objects' metadata (and we)
+	 * may hold pointers into it. */
+	int ret = dlclose(h);
+	assert(ret == 0);
+	struct uniqtype *pair_elem_t = element_type(pair_t);
+	assert(0 == strcmp(UNIQTYPE_NAME(pair_elem_t), "pair"));
+	assert(pair_elem_t->un.composite.nmemb == 2);
+	assert(pair_elem_t->related[0].un.memb.ptr == int_t);
 	return 0;
 }

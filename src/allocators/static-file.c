@@ -576,8 +576,7 @@ void __static_file_allocator_notify_unload(const char *copied_filename)
 				struct allocs_file_metadata *afm = (struct allocs_file_metadata *) b->allocator_private;
 				if (0 == strcmp(copied_filename, afm->m.filename))
 				{
-					/* unload meta-object */
-					dlclose(afm->meta_obj_handle);
+					if (afm->meta_obj_handle) dlclose(afm->meta_obj_handle);
 					/* It's a match, so delete. FIXME: don't match by name (fragile);
 					 * load addr is better */
 					__liballocs_delete_bigalloc_at(b->begin, &__static_file_allocator);

@@ -125,7 +125,9 @@ int load_and_init_all_metadata_for_one_object(struct dl_phdr_info *info, size_t 
 	}
 	errno = 0;
 	//dlerror();
-	meta_handle = dlopen(libfile_name, RTLD_NOW | RTLD_GLOBAL);
+	/* RTLD_NODELETE: a uniqtype is one object for the whole process, so
+	 * other meta-DSOs' metadata may point into this one once it is loaded*/
+	meta_handle = dlopen(libfile_name, RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE);
 	errno = 0;
 	if (!meta_handle)
 	{
