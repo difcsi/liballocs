@@ -10,8 +10,9 @@
 /* Structurally identical types are one object regardless of which meta-DSO holds them */
 struct pair { int first; int second; };
 struct pair *new_pair(void);
-extern struct pair canon_static_pair;
-extern int *canon_static_ptr;
+struct pair *canon_pair_addr(void);
+int **canon_ptr_addr(void);
+int *canon_local_addr(void);
 struct pair our_pair = { 3, 4 };
 int *our_ptr = &our_pair.first;
 
@@ -38,9 +39,8 @@ int main(void)
 	assert(heap_t);
 	assert(element_type(heap_t) == pair_t);
 
-	/* Statics: their types come from our meta-DSO's metavector. (Those of
-	 * the lib, a DT_NEEDED library, get no metavector: its
-	 * segments are set up before its meta-DSO is loaded.) */
+	/* Statics: their types come from the metavector in the meta-DSO of the
+	 * object that holds them. Ours first... */
 	struct uniqtype *static_t = __liballocs_get_alloc_type(&our_pair);
 	assert(static_t);
 	assert(element_type(static_t) == pair_t);
@@ -48,6 +48,19 @@ int main(void)
 	assert(ptr_t);
 	assert(UNIQTYPE_IS_POINTER_TYPE(element_type(ptr_t)));
 	assert(UNIQTYPE_POINTEE_TYPE(element_type(ptr_t)) == int_t);
+	/* ... then libcanon's. Its metavector records name its own copies of
+	 * the uniqtypes, we are checking that they were re-written to the
+	 * canonical ones. */
+	struct uniqtype *lib_static_t = __liballocs_get_alloc_type(canon_pair_addr());
+	assert(lib_static_t);
+	assert(element_type(lib_static_t) == pair_t);
+	struct uniqtype *lib_ptr_t = __liballocs_get_alloc_type(canon_ptr_addr());
+	assert(lib_ptr_t);
+	assert(UNIQTYPE_IS_POINTER_TYPE(element_type(lib_ptr_t)));
+	assert(UNIQTYPE_POINTEE_TYPE(element_type(lib_ptr_t)) == int_t);
+	struct uniqtype *lib_local_t = __liballocs_get_alloc_type(canon_local_addr());
+	assert(lib_local_t);
+	assert(element_type(lib_local_t) == int_t);
 
 	/* Uniqtype-to-uniqtype pointers inside THE LIB's own meta-DSO: look up
 	 * its copy of pair there, and check its member type is the canonical int. */

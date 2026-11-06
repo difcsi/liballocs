@@ -7,6 +7,13 @@ struct pair { int first; int second; };
 
 struct pair canon_static_pair = { 1, 2 };
 int *canon_static_ptr = &canon_static_pair.first;
+static int canon_local = 5;
+
+/* The program reaches our statics through these, so that they stay here
+ * rather than getting copy relocations into its own data segment. */
+struct pair *canon_pair_addr(void) { return &canon_static_pair; }
+int **canon_ptr_addr(void) { return &canon_static_ptr; }
+int *canon_local_addr(void) { return &canon_local; }
 
 struct pair *new_pair(void)
 {
