@@ -231,6 +231,12 @@ struct uniqtype *__liballocs_uniqtype_registry_register(const char *name, struct
 struct uniqtype *__liballocs_uniqtype_registry_register_hashed(const char *name, uint32_t gnu_hash, struct uniqtype *u) __attribute__((visibility("hidden")));
 struct uniqtype *__liballocs_uniqtype_registry_lookup(const char *name) __attribute__((visibility("hidden")));
 _Bool __liballocs_uniqtype_sym_is_uniqtype(ElfW(Sym) *s, const char *name) __attribute__((visibility("hidden")));
+/* Calls cb for every uniqtype symbol (definition or alias) of l, with the
+ * symbol's GNU hash, low bit cleared, taken from l's .gnu.hash chain array
+ * when l has one and computed with dl_new_hash otherwise. Stops early on a
+ * nonzero return and returns it; 0 otherwise. */
+typedef int uniqtype_sym_cb(ElfW(Sym) *s, const char *name, uint32_t gnu_hash_masked, void *arg);
+int __liballocs_uniqtype_for_each_symbol(struct link_map *l, uniqtype_sym_cb *cb, void *arg) __attribute__((visibility("hidden")));
 _Bool __liballocs_uniqtype_sym_is_definition(ElfW(Sym) *s, const char *name) __attribute__((visibility("hidden")));
 
 void __notify_copy(void *dest, const void *src, unsigned long n);

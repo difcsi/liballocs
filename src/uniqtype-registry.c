@@ -30,6 +30,13 @@
  * defines uniqtypes of its own. Meta-DSOs are never unmapped (RTLD_NODELETE),
  * so the entries' names, which point into their dynstrs, stay valid.
  *
+ * Keys are the GNU hash of the name with its low bit cleared, which is what
+ * an object's .gnu.hash chain array stores for each symbol (the low bit marks
+ * the end of a bucket's run). So an object's uniqtype symbols are registered
+ * by walking that array (__liballocs_uniqtype_for_each_symbol), without
+ * hashing any name or scanning the whole dynsym; an object with no GNU hash
+ * table gets a dynsym scan with dl_new_hash instead.
+ *
  * Open addressing with linear probing; no libc malloc, since we run while
  * metadata is being loaded. */
 
@@ -106,20 +113,60 @@ static struct uniqtype *insert(const char *name, uint32_t key, struct uniqtype *
 	return u;
 }
 
-static void scan_object(struct link_map *l)
+int __liballocs_uniqtype_for_each_symbol(struct link_map *l, uniqtype_sym_cb *cb, void *arg)
 {
 	ElfW(Sym) *dynsym = get_dynsym(l);
 	unsigned char *dynstr = get_dynstr(l);
-	if (!dynsym || !dynstr) return;
+	if (!dynsym || !dynstr) return 0;
+	ElfW(Word) *gnu_hash = get_gnu_hash(l);
+	if (gnu_hash)
+	{
+		/* Header: nbuckets, symoffset, maskwords, shift2; then maskwords
+		 * 64-bit bloom words; then the buckets; then one chain word per
+		 * symbol from symoffset up, holding that symbol's hash with the
+		 * low bit marking the end of a bucket's run. Symbols are sorted by
+		 * bucket, so the last word of the last run is the last symbol. */
+		uint32_t nbuckets = gnu_hash[0], symoffset = gnu_hash[1], maskwords = gnu_hash[2];
+		const uint32_t *buckets = (const uint32_t *) ((const ElfW(Addr) *) &gnu_hash[4] + maskwords);
+		const uint32_t *chain = buckets + nbuckets;
+		uint32_t last = 0;
+		for (uint32_t b = 0; b < nbuckets; ++b)
+		{
+			uint32_t i = buckets[b];
+			if (i < symoffset) continue; /* empty bucket (0) */
+			while (!(chain[i - symoffset] & 1u)) ++i;
+			if (i > last) last = i;
+		}
+		for (uint32_t i = symoffset; last != 0 && i <= last; ++i)
+		{
+			const char *name = (const char *) dynstr + dynsym[i].st_name;
+			if (!__liballocs_uniqtype_sym_is_uniqtype(&dynsym[i], name)) continue;
+			int ret = cb(&dynsym[i], name, chain[i - symoffset] & ~1u, arg);
+			if (ret) return ret;
+		}
+		return 0;
+	}
+	/* No GNU hash table: scan the symbol table and hash the names ourselves. */
 	unsigned long nsyms = dynamic_symbol_count(l->l_ld, l);
 	for (unsigned long i = 1; i < nsyms; ++i)
 	{
 		const char *name = (const char *) dynstr + dynsym[i].st_name;
-		if (__liballocs_uniqtype_sym_is_uniqtype(&dynsym[i], name))
-		{
-			insert(name, KEY_OF(dl_new_hash(name)), (struct uniqtype *) (l->l_addr + dynsym[i].st_value));
-		}
+		if (!__liballocs_uniqtype_sym_is_uniqtype(&dynsym[i], name)) continue;
+		int ret = cb(&dynsym[i], name, KEY_OF(dl_new_hash(name)), arg);
+		if (ret) return ret;
 	}
+	return 0;
+}
+
+static int insert_symbol(ElfW(Sym) *s, const char *name, uint32_t hash, void *arg)
+{
+	struct link_map *l = arg;
+	insert(name, KEY_OF(hash), (struct uniqtype *) (l->l_addr + s->st_value));
+	return 0;
+}
+static void scan_object(struct link_map *l)
+{
+	__liballocs_uniqtype_for_each_symbol(l, insert_symbol, l);
 }
 
 static _Bool ensure_initialized(void)

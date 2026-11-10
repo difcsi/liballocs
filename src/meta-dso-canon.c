@@ -85,6 +85,25 @@ static void canonicalise_uniqtype(struct uniqtype *u, ElfW(Sym) *s,
 	}
 }
 
+struct canon_walk
+{
+	struct link_map *l;
+	struct canon_pair *map;
+	unsigned nmap, ndefs;
+};
+/* Register every name, aliases included; but only definitions can be
+ * duplicates needing a map entry (an alias's object is handled under its
+ * own, codeful name). */
+static int register_symbol(ElfW(Sym) *s, const char *name, uint32_t hash, void *arg)
+{
+	struct canon_walk *w = arg;
+	struct uniqtype *own = (struct uniqtype *) (w->l->l_addr + s->st_value);
+	struct uniqtype *canonical = __liballocs_uniqtype_registry_register_hashed(name, hash, own);
+	if (!__liballocs_uniqtype_sym_is_definition(s, name)) return 0;
+	++w->ndefs;
+	if (canonical != own) w->map[w->nmap++] = (struct canon_pair) { own, canonical };
+	return 0;
+}
 void canonicalise_meta_dso(struct link_map *l)
 {
 	struct timespec t_start;
@@ -96,27 +115,16 @@ void canonicalise_meta_dso(struct link_map *l)
 
 	struct canon_pair *map = __private_malloc(nsyms * sizeof (struct canon_pair));
 	if (!map) return;
-	unsigned nmap = 0, ndefs = 0;
-	for (unsigned long i = 1; i < nsyms; ++i)
-	{
-		ElfW(Sym) *s = &dynsym[i];
-		const char *name = (const char *) dynstr + s->st_name;
-		if (!__liballocs_uniqtype_sym_is_uniqtype(s, name)) continue;
-		/* Register every name, aliases included; but only definitions can
-		 * be duplicates needing a map entry (an alias's object is handled
-		 * under its own, codeful name). */
-		struct uniqtype *own = (struct uniqtype *) (l->l_addr + s->st_value);
-		struct uniqtype *canonical = __liballocs_uniqtype_registry_register(name, own);
-		if (!__liballocs_uniqtype_sym_is_definition(s, name)) continue;
-		++ndefs;
-		if (canonical == own) continue;
-		map[nmap++] = (struct canon_pair) { own, canonical };
-	}
+	struct canon_walk w = { l, map, 0, 0 };
+	__liballocs_uniqtype_for_each_symbol(l, register_symbol, &w);
+	unsigned nmap = w.nmap, ndefs = w.ndefs;
 	struct timespec t_mid;
 	clock_gettime(CLOCK_MONOTONIC, &t_mid);
 	if (nmap > 0)
 	{
 		sort_pairs(map, nmap);
+		/* Rewriting needs no hashes, so one plain pass over the symbol table
+		 * covers the definitions and the tables that hold uniqtype pointers. */
 		for (unsigned long i = 1; i < nsyms; ++i)
 		{
 			ElfW(Sym) *s = &dynsym[i];
