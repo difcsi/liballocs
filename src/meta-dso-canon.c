@@ -112,6 +112,8 @@ void canonicalise_meta_dso(struct link_map *l)
 		if (canonical == own) continue;
 		map[nmap++] = (struct canon_pair) { own, canonical };
 	}
+	struct timespec t_mid;
+	clock_gettime(CLOCK_MONOTONIC, &t_mid);
 	if (nmap > 0)
 	{
 		sort_pairs(map, nmap);
@@ -159,8 +161,10 @@ void canonicalise_meta_dso(struct link_map *l)
 	}
 	struct timespec t_end;
 	clock_gettime(CLOCK_MONOTONIC, &t_end);
-	debug_printf(3, "canonicalised meta-DSO %s: %u of %u uniqtype definitions were duplicates (%ld us)\n",
+#define US_BETWEEN(a, b) ((long) (((b).tv_sec - (a).tv_sec) * 1000000L + ((b).tv_nsec - (a).tv_nsec) / 1000))
+	debug_printf(3, "canonicalised meta-DSO %s: %u of %u uniqtype definitions were duplicates (%ld us: %ld register, %ld rewrite)\n",
 		l->l_name, nmap, ndefs,
-		(long) ((t_end.tv_sec - t_start.tv_sec) * 1000000L + (t_end.tv_nsec - t_start.tv_nsec) / 1000));
+		US_BETWEEN(t_start, t_end), US_BETWEEN(t_start, t_mid), US_BETWEEN(t_mid, t_end));
+#undef US_BETWEEN
 	__private_free(map);
 }
