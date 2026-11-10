@@ -225,6 +225,10 @@ void canonicalise_meta_dso(struct link_map *l) __attribute__((visibility("hidden
  * codeful symbol name: register a definition and get the canonical one back
  * (the first registered, i.e. first loaded, which may be this one). */
 struct uniqtype *__liballocs_uniqtype_registry_register(const char *name, struct uniqtype *u) __attribute__((visibility("hidden")));
+/* The same, for a caller that already has the name's GNU hash (dl_new_hash);
+ * its low bit is ignored, so a value from an object's .gnu.hash chain array
+ * serves as it is. */
+struct uniqtype *__liballocs_uniqtype_registry_register_hashed(const char *name, uint32_t gnu_hash, struct uniqtype *u) __attribute__((visibility("hidden")));
 struct uniqtype *__liballocs_uniqtype_registry_lookup(const char *name) __attribute__((visibility("hidden")));
 _Bool __liballocs_uniqtype_sym_is_uniqtype(ElfW(Sym) *s, const char *name) __attribute__((visibility("hidden")));
 _Bool __liballocs_uniqtype_sym_is_definition(ElfW(Sym) *s, const char *name) __attribute__((visibility("hidden")));

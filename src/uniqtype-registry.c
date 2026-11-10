@@ -35,8 +35,7 @@
 
 struct registry_entry
 {
-	uint32_t hash;
-	uint32_t len;
+	uint32_t hash; /* the GNU hash of the name, low bit cleared (see below) */
 	const char *name; /* in the defining object's dynstr */
 	struct uniqtype *u;
 };
@@ -58,24 +57,22 @@ _Bool __liballocs_uniqtype_sym_is_definition(ElfW(Sym) *s, const char *name)
 		&& s->st_size > 1 /* aliases are 1 byte long */;
 }
 
-static uint32_t hash_name(const char *name, uint32_t *out_len)
-{
-	uint32_t h = 5381;
-	const char *p = name;
-	for (; *p; ++p) h = h * 33 + (unsigned char) *p;
-	*out_len = p - name;
-	return h;
-}
+/* Keys are the GNU hash (dl_new_hash) of the name with its low bit cleared:
+ * that is what an object's .gnu.hash chain array stores for each symbol (the
+ * low bit there marks the end of a chain), so a caller walking that array can
+ * hand us the hash without touching the name. Equal keys are confirmed by
+ * comparing the names, as ld.so does. */
+#define KEY_OF(gnu_hash) ((uint32_t) (gnu_hash) & ~1u)
 
 /* The entry for this name, or the empty slot where it would go. */
-static struct registry_entry *find_slot(uint32_t h, const char *name, uint32_t len)
+static struct registry_entry *find_slot(uint32_t key, const char *name)
 {
-	unsigned long i = h & (capacity - 1);
+	unsigned long i = key & (capacity - 1);
 	for (;;)
 	{
 		struct registry_entry *e = &table[i];
 		if (!e->name) return e;
-		if (e->hash == h && e->len == len && 0 == memcmp(e->name, name, len)) return e;
+		if (e->hash == key && 0 == strcmp(e->name, name)) return e;
 		i = (i + 1) & (capacity - 1);
 	}
 }
@@ -92,21 +89,19 @@ static _Bool grow(void)
 	capacity = new_capacity;
 	for (unsigned long i = 0; i < old_capacity; ++i)
 	{
-		if (old_table[i].name) *find_slot(old_table[i].hash, old_table[i].name, old_table[i].len) = old_table[i];
+		if (old_table[i].name) *find_slot(old_table[i].hash, old_table[i].name) = old_table[i];
 	}
 	if (old_table) __private_free(old_table);
 	return 1;
 }
 
 /* Register this definition unless the name is taken; return the canonical one. */
-static struct uniqtype *insert(const char *name, struct uniqtype *u)
+static struct uniqtype *insert(const char *name, uint32_t key, struct uniqtype *u)
 {
 	if (10 * (count + 1) > 7 * capacity && !grow()) return u;
-	uint32_t len;
-	uint32_t h = hash_name(name, &len);
-	struct registry_entry *e = find_slot(h, name, len);
+	struct registry_entry *e = find_slot(key, name);
 	if (e->name) return e->u;
-	*e = (struct registry_entry) { h, len, name, u };
+	*e = (struct registry_entry) { key, name, u };
 	++count;
 	return u;
 }
@@ -122,7 +117,7 @@ static void scan_object(struct link_map *l)
 		const char *name = (const char *) dynstr + dynsym[i].st_name;
 		if (__liballocs_uniqtype_sym_is_uniqtype(&dynsym[i], name))
 		{
-			insert(name, (struct uniqtype *) (l->l_addr + dynsym[i].st_value));
+			insert(name, KEY_OF(dl_new_hash(name)), (struct uniqtype *) (l->l_addr + dynsym[i].st_value));
 		}
 	}
 }
@@ -136,17 +131,21 @@ static _Bool ensure_initialized(void)
 	return 1;
 }
 
-struct uniqtype *__liballocs_uniqtype_registry_register(const char *name, struct uniqtype *u)
+struct uniqtype *__liballocs_uniqtype_registry_register_hashed(const char *name,
+	uint32_t gnu_hash, struct uniqtype *u)
 {
 	if (!ensure_initialized()) return u;
-	return insert(name, u);
+	return insert(name, KEY_OF(gnu_hash), u);
+}
+
+struct uniqtype *__liballocs_uniqtype_registry_register(const char *name, struct uniqtype *u)
+{
+	return __liballocs_uniqtype_registry_register_hashed(name, dl_new_hash(name), u);
 }
 
 struct uniqtype *__liballocs_uniqtype_registry_lookup(const char *name)
 {
 	if (!ensure_initialized()) return NULL;
-	uint32_t len;
-	uint32_t h = hash_name(name, &len);
-	struct registry_entry *e = find_slot(h, name, len);
+	struct registry_entry *e = find_slot(KEY_OF(dl_new_hash(name)), name);
 	return e->name ? e->u : NULL;
 }

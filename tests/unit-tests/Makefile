@@ -5,7 +5,7 @@ LIBALLOCS_BASE := $(realpath $(dir $(THIS_MAKEFILE))/../..)
 -include $(LIBALLOCS_BASE)/config.mk
 
 # FIXME: this is repetitive w.r.t. liballocs core build flags
-CFLAGS += -I$(LIBALLOCS_BASE)/include -I$(LIBRUNT)/include -I$(LIBSYSTRAP)
+CFLAGS += -I$(LIBALLOCS_BASE)/include -I$(LIBRUNT)/include -I$(LIBSYSTRAP) -I$(LIBSYSTRAP)/include
 
 CFLAGS += -g -std=c11 -D_GNU_SOURCE -save-temps
 # for metavec's test case to work, it needs to be able to find "main" in dynsym
